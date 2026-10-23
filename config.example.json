@@ -1,0 +1,7 @@
+{
+  "rex_url": "http://192.168.1.20:32400",
+  "listen": "127.0.0.1:9982",
+  "max_resolution": 1080,
+  "addons": [],
+  "catalogs": []
+}

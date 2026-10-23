@@ -1,0 +1,14 @@
+# systemd --user unit: copy to ~/.config/systemd/user/, then
+#   systemctl --user daemon-reload && systemctl --user enable --now rex-stremio
+[Unit]
+Description=rex-stremio: Stremio catalogs as a rex source
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/rex-stremio
+ExecStart=/usr/bin/python3 %h/rex-stremio/rex_stremio.py --config %h/rex-stremio/config.json
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

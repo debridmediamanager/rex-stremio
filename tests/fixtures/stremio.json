@@ -1,0 +1,928 @@
+{
+ "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams.",
+ "routes": {
+  "/dmm/catalog/movie/casted-movies.json": {
+   "metas": [
+    {
+     "id": "tt30144839",
+     "type": "movie",
+     "name": "One Battle After Another",
+     "poster": "https://images.metahub.space/poster/small/tt30144839/img"
+    }
+   ],
+   "cacheMaxAge": 0
+  },
+  "/dmm/stream/movie/tt30144839.json": {
+   "streams": [
+    {
+     "name": "DMM Cast RD\u2728",
+     "title": "Cast a file inside a torrent",
+     "externalUrl": "https://debridmediamanager.com/movie/tt30144839",
+     "behaviorHints": {
+      "bingeGroup": "dmm:tt30144839:cast"
+     }
+    },
+    {
+     "name": "83.77 GB",
+     "title": "00062.m2ts\n\ud83c\udfac DMM Cast RD",
+     "url": "https://debridmediamanager.com/api/stremio/CASTID/play/WUXHQBTNJCDZA",
+     "behaviorHints": {
+      "bingeGroup": "dmm:4c686bf52dbe98ef68ce02eeaeb12c5b75f99c1b"
+     }
+    },
+    {
+     "name": "4K \u2022 HEVC \u2022 83.52 GB",
+     "title": "00062.m2ts\nTrueHD 7.1\n\ud83c\udfac DMM Cast RD",
+     "url": "https://debridmediamanager.com/api/stremio/CASTID/play/BTP7FRO44LRYGECE",
+     "behaviorHints": {
+      "bingeGroup": "dmm:186f9237dfb6cb9aab3a24a1d775acee8ac9fb5b"
+     }
+    },
+    {
+     "name": "83.52 GB",
+     "title": "00062.m2ts\n\ud83c\udfac DMM Cast RD",
+     "url": "https://debridmediamanager.com/api/stremio/CASTID/play/BHQQ3EO3UMNTYC5C",
+     "behaviorHints": {
+      "bingeGroup": "dmm:4fb16cbf9daaae75c02f4bffd1efd1851ad15634"
+     }
+    },
+    {
+     "name": "4K \u2022 HEVC \u2022 76.85 GB",
+     "title": "One Battle After Another 2025 UHD BluRay DV-HDR10 1-\n0Bit 2160p AC-3 TrueHD7.1 Atmos + Multi HEVC-d3g.mkv\nTrueHD 7.1 \u2022 \ud83c\uddec\ud83c\udde7 \ud83c\uddee\ud83c\uddf9 \ud83c\uddea\ud83c\uddf8\n\ud83c\udfac DMM Cast RD",
+     "url": "https://debridmediamanager.com/api/stremio/CASTID/play/PK2ITAZ6HY4CC6A8",
+     "behaviorHints": {
+      "bingeGroup": "dmm:3ef5aa833980b2f78356e916e82f13ba67caacfe"
+     }
+    },
+    {
+     "name": "70.93 GB",
+     "title": "One.Battle.After.Another.2025.2160-\np.UHDRemux.HDR.DV-TheEqualizer.mkv\n\ud83c\udfac DMM Cast RD",
+     "url": "https://debridmediamanager.com/api/stremio/CASTID/play/TWCWKFVBMCB4UED0",
+     "behaviorHints": {
+      "bingeGroup": "dmm:4015378255e3bd6fe9e464225d8bcf2d9adb907e"
+     }
+    }
+   ],
+   "cacheMaxAge": 0
+  },
+  "/cinemeta/catalog/movie/top.json": {
+   "metas": [
+    {
+     "imdb_id": "tt34384900",
+     "name": "Love of Your Life",
+     "popularities": {
+      "trakt": 322,
+      "moviedb": 115.6703,
+      "stremio": 3.8556766666666666,
+      "stremio_lib": 0
+     },
+     "type": "movie",
+     "cast": [
+      "Margaret Qualley",
+      "Gabriel Basso",
+      "Catherine Keener"
+     ],
+     "country": "United States",
+     "description": "Maya, a smart, wry nurse, is swept up in an immersive love, that sets her life on a trajectory she never would have imagined.",
+     "director": [
+      "Rachel Morrison"
+     ],
+     "genre": [
+      "Drama",
+      "Romance"
+     ],
+     "imdbRating": "",
+     "released": "2026-10-14T00:00:00.000Z",
+     "slug": "movie/love-of-your-life-34384900",
+     "writer": [
+      "Julia Cox"
+     ],
+     "year": "2026",
+     "moviedb_id": 1381078,
+     "poster": "https://images.metahub.space/poster/small/tt34384900/img",
+     "runtime": "109 min",
+     "trailers": [
+      {
+       "source": "HzGx48E64Xg",
+       "type": "Trailer"
+      }
+     ],
+     "popularity": 3.8556766666666666,
+     "logo": "https://images.metahub.space/logo/medium/tt34384900/img",
+     "background": "https://images.metahub.space/background/medium/tt34384900/img",
+     "id": "tt34384900",
+     "genres": [
+      "Drama",
+      "Romance"
+     ],
+     "releaseInfo": "2026",
+     "trailerStreams": [
+      {
+       "title": "Love of Your Life",
+       "ytId": "HzGx48E64Xg"
+      }
+     ],
+     "links": [
+      {
+       "name": "Love of Your Life",
+       "category": "share",
+       "url": "https://www.strem.io/s/movie/love-of-your-life-34384900"
+      },
+      {
+       "name": "Drama",
+       "category": "Genres",
+       "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/movie/top?genre=Drama"
+      },
+      {
+       "name": "Romance",
+       "category": "Genres",
+       "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/movie/top?genre=Romance"
+      },
+      {
+       "name": "Margaret Qualley",
+       "category": "Cast",
+       "url": "stremio:///search?search=Margaret%20Qualley"
+      },
+      {
+       "name": "Gabriel Basso",
+       "category": "Cast",
+       "url": "stremio:///search?search=Gabriel%20Basso"
+      },
+      {
+       "name": "Catherine Keener",
+       "category": "Cast",
+       "url": "stremio:///search?search=Catherine%20Keener"
+      },
+      {
+       "name": "Julia Cox",
+       "category": "Writers",
+       "url": "stremio:///search?search=Julia%20Cox"
+      },
+      {
+       "name": "Rachel Morrison",
+       "category": "Directors",
+       "url": "stremio:///search?search=Rachel%20Morrison"
+      }
+     ],
+     "behaviorHints": {
+      "defaultVideoId": "tt34384900",
+      "hasScheduledVideos": false
+     }
+    },
+    {
+     "imdb_id": "tt6262770",
+     "name": "Tenzing",
+     "popularities": {
+      "trakt": 637,
+      "moviedb": 107.9694,
+      "stremio": 3.5989799999999996,
+      "stremio_lib": 0
+     },
+     "type": "movie",
+     "awards": "1 win & 1 nomination total",
+     "cast": [
+      "Genden Phuntsok",
+      "Tom Hiddleston",
+      "Willem Dafoe"
+     ],
+     "country": "United Kingdom, Australia, United States",
+     "description": "The untold and inspiring tale of one of the most important mountain climbers in history who, with Edmund Hillary, became the first person to reach the summit of Mount Everest.",
+     "director": [
+      "Jennifer Peedom"
+     ],
+     "genre": [
+      "Adventure",
+      "Biography",
+      "Drama"
+     ],
+     "imdbRating": "7.5",
+     "released": "2026-10-16T00:00:00.000Z",
+     "slug": "movie/tenzing-6262770",
+     "writer": [
+      "Luke Davies",
+      "Jennifer Peedom",
+      "Ed Douglas"
+     ],
+     "year": "2026",
+     "moviedb_id": 1288069,
+     "poster": "https://images.metahub.space/poster/small/tt6262770/img",
+     "runtime": "126 min",
+     "trailers": [
+      {
+       "source": "KkYCY5YR12U",
+       "type": "Trailer"
+      }
+     ],
+     "popularity": 3.5989799999999996,
+     "logo": "https://images.metahub.space/logo/medium/tt6262770/img",
+     "background": "https://images.metahub.space/background/medium/tt6262770/img",
+     "id": "tt6262770",
+     "genres": [
+      "Adventure",
+      "Biography",
+      "Drama"
+     ],
+     "releaseInfo": "2026",
+     "trailerStreams": [
+      {
+       "title": "Tenzing",
+       "ytId": "KkYCY5YR12U"
+      }
+     ],
+     "links": [
+      {
+       "name": "7.5",
+       "category": "imdb",
+       "url": "https://imdb.com/title/tt6262770"
+      },
+      {
+       "name": "Tenzing",
+       "category": "share",
+       "url": "https://www.strem.io/s/movie/tenzing-6262770"
+      },
+      {
+       "name": "Adventure",
+       "category": "Genres",
+       "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/movie/top?genre=Adventure"
+      },
+      {
+       "name": "Biography",
+       "category": "Genres",
+       "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/movie/top?genre=Biography"
+      },
+      {
+       "name": "Drama",
+       "category": "Genres",
+       "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/movie/top?genre=Drama"
+      },
+      {
+       "name": "Genden Phuntsok",
+       "category": "Cast",
+       "url": "stremio:///search?search=Genden%20Phuntsok"
+      },
+      {
+       "name": "Tom Hiddleston",
+       "category": "Cast",
+       "url": "stremio:///search?search=Tom%20Hiddleston"
+      },
+      {
+       "name": "Willem Dafoe",
+       "category": "Cast",
+       "url": "stremio:///search?search=Willem%20Dafoe"
+      },
+      {
+       "name": "Luke Davies",
+       "category": "Writers",
+       "url": "stremio:///search?search=Luke%20Davies"
+      },
+      {
+       "name": "Jennifer Peedom",
+       "category": "Writers",
+       "url": "stremio:///search?search=Jennifer%20Peedom"
+      },
+      {
+       "name": "Ed Douglas",
+       "category": "Writers",
+       "url": "stremio:///search?search=Ed%20Douglas"
+      },
+      {
+       "name": "Jennifer Peedom",
+       "category": "Directors",
+       "url": "stremio:///search?search=Jennifer%20Peedom"
+      }
+     ],
+     "behaviorHints": {
+      "defaultVideoId": "tt6262770",
+      "hasScheduledVideos": false
+     }
+    }
+   ],
+   "hasMore": true,
+   "cacheMaxAge": 14400,
+   "staleRevalidate": 3600,
+   "staleError": 3600
+  },
+  "/httpx/stream/movie/tt34384900.json": {
+   "streams": [
+    {
+     "name": "httpx",
+     "title": "REDACTED",
+     "url": "{STREAMS}/httpx/p/REDACTED.m3u8",
+     "behaviorHints": {
+      "notWebReady": false
+     }
+    }
+   ]
+  },
+  "/httpx/stream/movie/tt6262770.json": {
+   "streams": [
+    {
+     "name": "httpx",
+     "title": "REDACTED",
+     "url": "{STREAMS}/httpx/p/REDACTED.m3u8",
+     "behaviorHints": {
+      "notWebReady": false
+     }
+    }
+   ]
+  },
+  "/cinemeta/catalog/series/top.json": {
+   "metas": [
+    {
+     "imdb_id": "tt11540908",
+     "name": "Carrie",
+     "popularities": {
+      "trakt": 3160,
+      "moviedb": 227.9206,
+      "stremio": 9.289719999999999,
+      "stremio_lib": 0
+     },
+     "type": "series",
+     "cast": [
+      "Summer H. Howell",
+      "Samantha Sloyan",
+      "Siena Agudong"
+     ],
+     "country": "Canada, United States",
+     "description": "After her father's sudden death, sheltered teenager Carrie White, raised by her domineering mother, enters public high school, where she faces a viral bullying scandal and the awakening of mysterious telekinetic powers.",
+     "genre": [
+      "Drama",
+      "Horror"
+     ],
+     "imdbRating": "7.8",
+     "released": "2026-10-07T00:00:00.000Z",
+     "slug": "series/carrie-11540908",
+     "writer": [
+      "Mike Flanagan"
+     ],
+     "year": "2026\u2013",
+     "runtime": "52 min",
+     "status": "Continuing",
+     "tvdb_id": 455755,
+     "moviedb_id": 288673,
+     "poster": "https://images.metahub.space/poster/small/tt11540908/img",
+     "trailers": [
+      {
+       "source": "jkUw2nh6fT0",
+       "type": "Trailer"
+      }
+     ],
+     "director": [],
+     "background": "https://images.metahub.space/background/medium/tt11540908/img",
+     "logo": "https://images.metahub.space/logo/medium/tt11540908/img",
+     "popularity": 9.289719999999999,
+     "id": "tt11540908",
+     "videos": [
+      {
+       "name": "FIRST PERIOD",
+       "season": 1,
+       "number": 1,
+       "firstAired": "2026-10-07T03:00:00.000Z",
+       "tvdb_id": 10755138,
+       "rating": 0,
+       "overview": "The start of a brand new day",
+       "thumbnail": "https://episodes.metahub.space/tt11540908/1/1/w780.jpg",
+       "id": "tt11540908:1:1",
+       "released": "2026-10-07T03:00:00.000Z",
+       "episode": 1,
+       "description": "The start of a brand new day"
+      },
+      {
+       "name": "FOREIGN LANGUAGE",
+       "season": 1,
+       "number": 2,
+       "firstAired": "2026-10-07T03:00:00.000Z",
+       "tvdb_id": 11873152,
+       "rating": 0,
+       "overview": "New communication skills from an unfamiliar culture",
+       "thumbnail": "https://episodes.metahub.space/tt11540908/1/2/w780.jpg",
+       "id": "tt11540908:1:2",
+       "released": "2026-10-07T03:00:00.000Z",
+       "episode": 2,
+       "description": "New communication skills from an unfamiliar culture"
+      },
+      {
+       "name": "SOCIAL STUDIES",
+       "season": 1,
+       "number": 3,
+       "firstAired": "2026-10-07T03:00:00.000Z",
+       "tvdb_id": 11873153,
+       "rating": 0,
+       "overview": "How people, communities, and societies interact",
+       "thumbnail": "https://episodes.metahub.space/tt11540908/1/3/w780.jpg",
+       "id": "tt11540908:1:3",
+       "released": "2026-10-07T03:00:00.000Z",
+       "episode": 3,
+       "description": "How people, communities, and societies interact"
+      },
+      {
+       "name": "DRAMATIC ARTS",
+       "season": 1,
+       "number": 4,
+       "firstAired": "2026-10-07T03:00:00.000Z",
+       "tvdb_id": 11873154,
+       "rating": 0,
+       "overview": "Voice, movement, and improvisation",
+       "thumbnail": "https://episodes.metahub.space/tt11540908/1/4/w780.jpg",
+       "id": "tt11540908:1:4",
+       "released": "2026-10-07T03:00:00.000Z",
+       "episode": 4,
+       "description": "Voice, movement, and improvisation"
+      },
+      {
+       "name": "PHYSICAL EDUCATION",
+       "season": 1,
+       "number": 5,
+       "firstAired": "2026-10-07T03:00:00.000Z",
+       "tvdb_id": 11873155,
+       "rating": 0,
+       "overview": "Health, fitness, and exercise",
+       "thumbnail": "https://episodes.metahub.space/tt11540908/1/5/w780.jpg",
+       "id": "tt11540908:1:5",
+       "released": "2026-10-07T03:00:00.000Z",
+       "episode": 5,
+       "description": "Health, fitness, and exercise"
+      },
+      {
+       "name": "HOME ECONOMICS",
+       "season": 1,
+       "number": 6,
+       "firstAired": "2026-10-07T03:00:00.000Z",
+       "tvdb_id": 11873156,
+       "rating": 0,
+       "overview": "Practical life skills for independent living",
+       "thumbnail": "https://episodes.metahub.space/tt11540908/1/6/w780.jpg",
+       "id": "tt11540908:1:6",
+       "released": "2026-10-07T03:00:00.000Z",
+       "episode": 6,
+       "description": "Practical life skills for independent living"
+      },
+      {
+       "name": "ROMANTIC LITERATURE",
+       "season": 1,
+       "number": 7,
+       "firstAired": "2026-10-07T03:00:00.000Z",
+       "tvdb_id": 11873157,
+       "rating": 0,
+       "overview": "The power of emotion and individual experience",
+       "thumbnail": "https://episodes.metahub.space/tt11540908/1/7/w780.jpg",
+       "id": "tt11540908:1:7",
+       "released": "2026-10-07T03:00:00.000Z",
+       "episode": 7,
+       "description": "The power of emotion and individual experience"
+      },
+      {
+       "name": "AP PHYSICS",
+       "season": 1,
+       "number": 8,
+       "firstAired": "2026-10-07T03:00:00.000Z",
+       "tvdb_id": 11873158,
+       "rating": 0,
+       "overview": "For every action, there is an equal and opposite reaction",
+       "thumbnail": "https://episodes.metahub.space/tt11540908/1/8/w780.jpg",
+       "id": "tt11540908:1:8",
+       "released": "2026-10-07T03:00:00.000Z",
+       "episode": 8,
+       "description": "For every action, there is an equal and opposite reaction"
+      }
+     ],
+     "genres": [
+      "Drama",
+      "Horror"
+     ],
+     "releaseInfo": "2026\u2013",
+     "trailerStreams": [
+      {
+       "title": "Carrie",
+       "ytId": "jkUw2nh6fT0"
+      }
+     ],
+     "links": [
+      {
+       "name": "7.8",
+       "category": "imdb",
+       "url": "https://imdb.com/title/tt11540908"
+      },
+      {
+       "name": "Carrie",
+       "category": "share",
+       "url": "https://www.strem.io/s/series/carrie-11540908"
+      },
+      {
+       "name": "Drama",
+       "category": "Genres",
+       "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/series/top?genre=Drama"
+      },
+      {
+       "name": "Horror",
+       "category": "Genres",
+       "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/series/top?genre=Horror"
+      },
+      {
+       "name": "Summer H. Howell",
+       "category": "Cast",
+       "url": "stremio:///search?search=Summer%20H.%20Howell"
+      },
+      {
+       "name": "Samantha Sloyan",
+       "category": "Cast",
+       "url": "stremio:///search?search=Samantha%20Sloyan"
+      },
+      {
+       "name": "Siena Agudong",
+       "category": "Cast",
+       "url": "stremio:///search?search=Siena%20Agudong"
+      },
+      {
+       "name": "Mike Flanagan",
+       "category": "Writers",
+       "url": "stremio:///search?search=Mike%20Flanagan"
+      }
+     ],
+     "behaviorHints": {
+      "defaultVideoId": null,
+      "hasScheduledVideos": true
+     }
+    }
+   ],
+   "hasMore": true,
+   "cacheMaxAge": 14400,
+   "staleRevalidate": 3600,
+   "staleError": 3600
+  },
+  "/cinemeta/meta/series/tt11540908.json": {
+   "meta": {
+    "imdb_id": "tt11540908",
+    "name": "Carrie",
+    "popularities": {
+     "trakt": 3165,
+     "moviedb": 227.9206,
+     "stremio": 7.597353333333333,
+     "stremio_lib": 0
+    },
+    "type": "series",
+    "cast": [
+     "Summer H. Howell",
+     "Samantha Sloyan",
+     "Siena Agudong"
+    ],
+    "country": "Canada, United States",
+    "description": "After her father's sudden death, sheltered teenager Carrie White, raised by her domineering mother, enters public high school, where she faces a viral bullying scandal and the awakening of mysterious telekinetic powers.",
+    "genre": [
+     "Drama",
+     "Horror"
+    ],
+    "imdbRating": "7.8",
+    "released": "2026-10-07T00:00:00.000Z",
+    "slug": "series/carrie-11540908",
+    "writer": [
+     "Mike Flanagan"
+    ],
+    "year": "2026\u2013",
+    "runtime": "52 min",
+    "status": "Continuing",
+    "tvdb_id": 455755,
+    "moviedb_id": 288673,
+    "poster": "https://images.metahub.space/poster/small/tt11540908/img",
+    "trailers": [
+     {
+      "source": "jkUw2nh6fT0",
+      "type": "Trailer"
+     }
+    ],
+    "director": [],
+    "background": "https://images.metahub.space/background/medium/tt11540908/img",
+    "logo": "https://images.metahub.space/logo/medium/tt11540908/img",
+    "popularity": 7.597353333333333,
+    "id": "tt11540908",
+    "genres": [
+     "Drama",
+     "Horror"
+    ],
+    "releaseInfo": "2026\u2013",
+    "videos": [
+     {
+      "name": "FIRST PERIOD",
+      "season": 1,
+      "number": 1,
+      "firstAired": "2026-10-07T03:00:00.000Z",
+      "tvdb_id": 10755138,
+      "rating": "0",
+      "overview": "The start of a brand new day",
+      "thumbnail": "https://episodes.metahub.space/tt11540908/1/1/w780.jpg",
+      "id": "tt11540908:1:1",
+      "released": "2026-10-07T03:00:00.000Z",
+      "episode": 1,
+      "description": "The start of a brand new day"
+     },
+     {
+      "name": "FOREIGN LANGUAGE",
+      "season": 1,
+      "number": 2,
+      "firstAired": "2026-10-07T03:00:00.000Z",
+      "tvdb_id": 11873152,
+      "rating": "0",
+      "overview": "New communication skills from an unfamiliar culture",
+      "thumbnail": "https://episodes.metahub.space/tt11540908/1/2/w780.jpg",
+      "id": "tt11540908:1:2",
+      "released": "2026-10-07T03:00:00.000Z",
+      "episode": 2,
+      "description": "New communication skills from an unfamiliar culture"
+     },
+     {
+      "name": "SOCIAL STUDIES",
+      "season": 1,
+      "number": 3,
+      "firstAired": "2026-10-07T03:00:00.000Z",
+      "tvdb_id": 11873153,
+      "rating": "0",
+      "overview": "How people, communities, and societies interact",
+      "thumbnail": "https://episodes.metahub.space/tt11540908/1/3/w780.jpg",
+      "id": "tt11540908:1:3",
+      "released": "2026-10-07T03:00:00.000Z",
+      "episode": 3,
+      "description": "How people, communities, and societies interact"
+     }
+    ],
+    "trailerStreams": [
+     {
+      "title": "Carrie",
+      "ytId": "jkUw2nh6fT0"
+     }
+    ],
+    "links": [
+     {
+      "name": "7.8",
+      "category": "imdb",
+      "url": "https://imdb.com/title/tt11540908"
+     },
+     {
+      "name": "Carrie",
+      "category": "share",
+      "url": "https://www.strem.io/s/series/carrie-11540908"
+     },
+     {
+      "name": "Drama",
+      "category": "Genres",
+      "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/series/top?genre=Drama"
+     },
+     {
+      "name": "Horror",
+      "category": "Genres",
+      "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/series/top?genre=Horror"
+     },
+     {
+      "name": "Summer H. Howell",
+      "category": "Cast",
+      "url": "stremio:///search?search=Summer%20H.%20Howell"
+     },
+     {
+      "name": "Samantha Sloyan",
+      "category": "Cast",
+      "url": "stremio:///search?search=Samantha%20Sloyan"
+     },
+     {
+      "name": "Siena Agudong",
+      "category": "Cast",
+      "url": "stremio:///search?search=Siena%20Agudong"
+     },
+     {
+      "name": "Mike Flanagan",
+      "category": "Writers",
+      "url": "stremio:///search?search=Mike%20Flanagan"
+     }
+    ],
+    "behaviorHints": {
+     "defaultVideoId": null,
+     "hasScheduledVideos": true
+    }
+   }
+  },
+  "/torrentio/stream/series/tt11540908:1:1.json": {
+   "streams": [
+    {
+     "name": "[RD+] Torrentio\n4k DV | HDR",
+     "title": "Carrie S01 (CZ/EN)[2160p][DV/HDR]\nCarrie_S01E01 4K CZ dab.mkv\n\ud83d\udc64 25 \ud83d\udcbe 5.84 GB \u2699\ufe0f EXT\n\ud83c\uddec\ud83c\udde7 / \ud83c\udde8\ud83c\uddff",
+     "url": "https://torrentio.strem.fun/resolve/realdebrid/RDKEY/35b89c05e9d9c48cb3ccb9a95f035bc7786e7890/null/0/Carrie_S01E01%204K%20CZ%20dab.mkv",
+     "behaviorHints": {
+      "bingeGroup": "torrentio|35b89c05e9d9c48cb3ccb9a95f035bc7786e7890",
+      "filename": "Carrie_S01E01 4K CZ dab.mkv"
+     }
+    },
+    {
+     "name": "[RD+] Torrentio\n4k HDR",
+     "title": "Carrie.2026.S01.MULTi.VF2.2160p.WEB.HDR10.H265.E-AC3-AKM\nCarrie.2026.S01E01.MULTi.VF2.2160p.WEB.HDR10.H265.E-AC3-AKM.mkv\n\ud83d\udc64 7 \ud83d\udcbe 6.07 GB \u2699\ufe0f EXT\nMulti Audio / \ud83c\uddec\ud83c\udde7 / \ud83c\uddeb\ud83c\uddf7",
+     "url": "https://torrentio.strem.fun/resolve/realdebrid/RDKEY/be34bd21413c4974e85bf8e33293257b29ca71c9/null/5/Carrie.2026.S01E01.MULTi.VF2.2160p.WEB.HDR10.H265.E-AC3-AKM.mkv",
+     "behaviorHints": {
+      "bingeGroup": "torrentio|be34bd21413c4974e85bf8e33293257b29ca71c9",
+      "filename": "Carrie.2026.S01E01.MULTi.VF2.2160p.WEB.HDR10.H265.E-AC3-AKM.mkv"
+     }
+    },
+    {
+     "name": "[RD+] Torrentio\n4k",
+     "title": "Carrie [4k 2160p][Cap.101]\n\ud83d\udc64 20 \ud83d\udcbe 5.81 GB \u2699\ufe0f Wolfmax4k\n\ud83c\uddea\ud83c\uddf8",
+     "url": "https://torrentio.strem.fun/resolve/realdebrid/RDKEY/265ab2282bf7a2e8e8d64c8ac358c36cae5baa52/null/0/Carrie%20%5B4k%202160p%5D%5BCap.101%5D.mkv",
+     "behaviorHints": {
+      "bingeGroup": "torrentio|4k",
+      "filename": "Carrie [4k 2160p][Cap.101].mkv"
+     }
+    }
+   ],
+   "cacheMaxAge": 3600,
+   "staleRevalidate": 14400,
+   "staleError": 604800
+  },
+  "/torrentio/stream/series/tt11540908:1:2.json": {
+   "streams": [
+    {
+     "name": "[RD+] Torrentio\n4k DV | HDR",
+     "title": "Carrie S01 (CZ/EN)[2160p][DV/HDR]\nCarrie_S01E02 4K CZ dab.mkv\n\ud83d\udc64 25 \ud83d\udcbe 5.49 GB \u2699\ufe0f EXT\n\ud83c\uddec\ud83c\udde7 / \ud83c\udde8\ud83c\uddff",
+     "url": "https://torrentio.strem.fun/resolve/realdebrid/RDKEY/35b89c05e9d9c48cb3ccb9a95f035bc7786e7890/null/1/Carrie_S01E02%204K%20CZ%20dab.mkv",
+     "behaviorHints": {
+      "bingeGroup": "torrentio|35b89c05e9d9c48cb3ccb9a95f035bc7786e7890",
+      "filename": "Carrie_S01E02 4K CZ dab.mkv"
+     }
+    },
+    {
+     "name": "[RD+] Torrentio\n4k HDR",
+     "title": "Carrie.2026.S01.MULTi.VF2.2160p.WEB.HDR10.H265.E-AC3-AKM\nCarrie.2026.S01E02.MULTi.VF2.2160p.WEB.HDR10.H265.E-AC3-AKM.mkv\n\ud83d\udc64 7 \ud83d\udcbe 5.7 GB \u2699\ufe0f EXT\nMulti Audio / \ud83c\uddec\ud83c\udde7 / \ud83c\uddeb\ud83c\uddf7",
+     "url": "https://torrentio.strem.fun/resolve/realdebrid/RDKEY/be34bd21413c4974e85bf8e33293257b29ca71c9/null/1/Carrie.2026.S01E02.MULTi.VF2.2160p.WEB.HDR10.H265.E-AC3-AKM.mkv",
+     "behaviorHints": {
+      "bingeGroup": "torrentio|be34bd21413c4974e85bf8e33293257b29ca71c9",
+      "filename": "Carrie.2026.S01E02.MULTi.VF2.2160p.WEB.HDR10.H265.E-AC3-AKM.mkv"
+     }
+    },
+    {
+     "name": "[RD+] Torrentio\n4k",
+     "title": "Carrie [4k 2160p][Cap.102]\n\ud83d\udc64 18 \ud83d\udcbe 5.46 GB \u2699\ufe0f Wolfmax4k\n\ud83c\uddea\ud83c\uddf8",
+     "url": "https://torrentio.strem.fun/resolve/realdebrid/RDKEY/74f7beb32e5af58cc52ec745f895aad863b5b9d6/null/0/Carrie%20%5B4k%202160p%5D%5BCap.102%5D.mkv",
+     "behaviorHints": {
+      "bingeGroup": "torrentio|4k",
+      "filename": "Carrie [4k 2160p][Cap.102].mkv"
+     }
+    }
+   ],
+   "cacheMaxAge": 3600,
+   "staleRevalidate": 14400,
+   "staleError": 604800
+  },
+  "/torrentio/stream/series/tt11540908:1:3.json": {
+   "streams": [
+    {
+     "name": "[RD+] Torrentio\n4k DV | HDR",
+     "title": "Carrie S01 (CZ/EN)[2160p][DV/HDR]\nCarrie_S01E03 4K CZ dab.mkv\n\ud83d\udc64 25 \ud83d\udcbe 5.17 GB \u2699\ufe0f EXT\n\ud83c\uddec\ud83c\udde7 / \ud83c\udde8\ud83c\uddff",
+     "url": "https://torrentio.strem.fun/resolve/realdebrid/RDKEY/35b89c05e9d9c48cb3ccb9a95f035bc7786e7890/null/2/Carrie_S01E03%204K%20CZ%20dab.mkv",
+     "behaviorHints": {
+      "bingeGroup": "torrentio|35b89c05e9d9c48cb3ccb9a95f035bc7786e7890",
+      "filename": "Carrie_S01E03 4K CZ dab.mkv"
+     }
+    },
+    {
+     "name": "[RD+] Torrentio\n4k HDR",
+     "title": "Carrie.2026.S01.MULTi.VF2.2160p.WEB.HDR10.H265.E-AC3-AKM\nCarrie.2026.S01E03.MULTi.VF2.2160p.WEB.HDR10.H265.E-AC3-AKM.mkv\n\ud83d\udc64 7 \ud83d\udcbe 5.37 GB \u2699\ufe0f EXT\nMulti Audio / \ud83c\uddec\ud83c\udde7 / \ud83c\uddeb\ud83c\uddf7",
+     "url": "https://torrentio.strem.fun/resolve/realdebrid/RDKEY/be34bd21413c4974e85bf8e33293257b29ca71c9/null/2/Carrie.2026.S01E03.MULTi.VF2.2160p.WEB.HDR10.H265.E-AC3-AKM.mkv",
+     "behaviorHints": {
+      "bingeGroup": "torrentio|be34bd21413c4974e85bf8e33293257b29ca71c9",
+      "filename": "Carrie.2026.S01E03.MULTi.VF2.2160p.WEB.HDR10.H265.E-AC3-AKM.mkv"
+     }
+    },
+    {
+     "name": "[RD+] Torrentio\n4k",
+     "title": "Carrie [4k 2160p][Cap.103]\n\ud83d\udc64 15 \ud83d\udcbe 5.14 GB \u2699\ufe0f Wolfmax4k\n\ud83c\uddea\ud83c\uddf8",
+     "url": "https://torrentio.strem.fun/resolve/realdebrid/RDKEY/f83f708d232d31017ccbeb2be512454f499a3afb/null/0/Carrie%20%5B4k%202160p%5D%5BCap.103%5D.mkv",
+     "behaviorHints": {
+      "bingeGroup": "torrentio|4k",
+      "filename": "Carrie [4k 2160p][Cap.103].mkv"
+     }
+    }
+   ],
+   "cacheMaxAge": 3600,
+   "staleRevalidate": 14400,
+   "staleError": 604800
+  },
+  "/pdm/catalog/movie/publicdomainmovies.json": {
+   "metas": [
+    {
+     "name": "The Kid",
+     "type": "movie",
+     "id": "tt0012349",
+     "imdbRating": "8.3",
+     "poster": "https://m.media-amazon.com/images/M/MV5BZjhhMThhNDItNTY2MC00MmU1LTliNDEtNDdhZjdlNTY5ZDQ1XkEyXkFqcGdeQXVyNjc1NTYyMjg@._V1_SX300.jpg",
+     "releaseInfo": "1921",
+     "runtime": "68 min",
+     "description": "Rotten Tomatoes: 100% / The Tramp cares for an abandoned child, but events put their relationship in jeopardy.",
+     "cast": [
+      "Charles Chaplin",
+      "Edna Purviance",
+      "Jackie Coogan"
+     ],
+     "director": [
+      "Charles Chaplin"
+     ],
+     "writer": [
+      "Charles Chaplin"
+     ],
+     "genres": [
+      "Comedy",
+      "Drama",
+      "Family"
+     ]
+    },
+    {
+     "name": "Night of the Living Dead",
+     "type": "movie",
+     "id": "tt0063350",
+     "imdbRating": "7.8",
+     "poster": "https://m.media-amazon.com/images/M/MV5BMzRmN2E1ZDUtZDc2ZC00ZmI3LTkwOTctNzE2ZDIzMGJiMTYzXkEyXkFqcGdeQXVyMTQxNzMzNDI@._V1_SX300.jpg",
+     "releaseInfo": "1968",
+     "runtime": "96 min",
+     "description": "Rotten Tomatoes: 96% / A ragtag group of Pennsylvanians barricade themselves in an old farmhouse to remain safe from a horde of flesh-eating ghouls that are ravaging the East Coast of the United States.",
+     "cast": [
+      "Duane Jones",
+      "Judith O'Dea",
+      "Karl Hardman"
+     ],
+     "director": [
+      "George A. Romero"
+     ],
+     "writer": [
+      "John A. Russo",
+      "George A. Romero"
+     ],
+     "genres": [
+      "Horror",
+      "Thriller"
+     ]
+    },
+    {
+     "name": "H\u00e4xan",
+     "type": "movie",
+     "id": "tt0013257",
+     "imdbRating": "7.6",
+     "poster": "https://m.media-amazon.com/images/M/MV5BNGJjOWY1NDUtZGEyZC00Y2VmLWIzZWUtZDRmODYwYmQzN2VmXkEyXkFqcGdeQXVyNDE5MTU2MDE@._V1_SX300.jpg",
+     "releaseInfo": "1922",
+     "runtime": "91 min",
+     "description": "Rotten Tomatoes: 91% / Fictionalized documentary showing the evolution of witchcraft, from its pagan roots to its confusion with hysteria in Eastern Europe.",
+     "cast": [
+      "Benjamin Christensen",
+      "Elisabeth Christensen",
+      "Maren Pedersen"
+     ],
+     "director": [
+      "Benjamin Christensen"
+     ],
+     "writer": [
+      "Benjamin Christensen"
+     ],
+     "genres": [
+      "Documentary",
+      "Fantasy",
+      "Horror"
+     ]
+    }
+   ],
+   "cacheMaxAge": 604800,
+   "staleRevalidate": 7776000,
+   "staleError": 31104000
+  },
+  "/pdm/stream/movie/tt0012349.json": {
+   "streams": [
+    {
+     "infoHash": "5d640678eae57c72c0d096904fd7d7405ece6653",
+     "title": "\ud83d\udcbe 859.37 MB",
+     "fileIdx": 1,
+     "name": "1080p"
+    }
+   ],
+   "cacheMaxAge": 604800,
+   "staleRevalidate": 7776000,
+   "staleError": 31104000
+  },
+  "/pdm/stream/movie/tt0063350.json": {
+   "streams": [
+    {
+     "infoHash": "11ea02584fa6351956f35671962ab46354d99060",
+     "title": "\ud83d\udcbe 1.51 GB",
+     "fileIdx": 0,
+     "name": "1080p"
+    }
+   ],
+   "cacheMaxAge": 604800,
+   "staleRevalidate": 7776000,
+   "staleError": 31104000
+  },
+  "/pdm/stream/movie/tt0013257.json": {
+   "streams": [
+    {
+     "infoHash": "2fc9906feee42f4cedb5fbae152a1b06774dd60d",
+     "title": "\ud83d\udcbe 1.88 GB",
+     "fileIdx": 0,
+     "name": "1080p"
+    }
+   ],
+   "cacheMaxAge": 604800,
+   "staleRevalidate": 7776000,
+   "staleError": 31104000
+  }
+ }
+}

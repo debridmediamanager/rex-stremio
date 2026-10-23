@@ -1,0 +1,104 @@
+# rex-stremio
+
+Your Stremio addons' catalogs as libraries in [rex](https://rex.debridmediamanager.com), so the
+films and shows they list play in every Plex app. Nothing is downloaded: when someone presses
+play, rex-stremio asks your stream addons for a link, as Stremio does, and rex plays it.
+
+- **Add addons as in Stremio.** Paste a manifest link on the settings page. Catalogs come from
+  any addon (Cinemeta, your DMM Cast list), streams from every addon that has them.
+- **Plex names everything.** Each film and episode goes to rex with its IMDb id, so Plex apps
+  show the usual titles, posters and summaries. The catalog's own title and poster show until
+  rex is claimed.
+- **You choose the quality.** The highest resolution within your limits plays (a size cap too).
+  A film keeps the stream it was first checked with, and if that link stops opening, the next
+  one plays.
+
+It is one Python file (standard library only) that runs beside rex and talks to it through rex's
+feed API, as every rex source does.
+
+## What you need
+
+| You need | Why |
+|---|---|
+| rex, nightly 2026.10.24 or newer, claimed | Older builds reject what rex-stremio sends; a claimed rex lets Plex name each title. Setup: [rex](https://notes.debridmediamanager.com/guides/rex/) |
+| Python 3.9 or newer and `ffprobe` (part of FFmpeg) | rex-stremio checks each title's stream once with ffprobe, because rex needs to know what is in it before it can play |
+| FFmpeg where rex runs, for addons that give HLS streams (`.m3u8`) | rex plays those by converting them (a copy, cheap). Files (`.mkv`, `.mp4`) need nothing |
+| Stream addons that give links, not torrents | rex plays files. Set your debrid service in the addon (for Torrentio, cached results only), or use one that gives links, such as DMM Cast |
+| rex-stremio on the same machine as rex, or on your home network | rex's feed answers only private networks |
+
+## Set up
+
+```bash
+git clone https://github.com/debridmediamanager/rex-stremio
+cd rex-stremio
+python3 rex_stremio.py
+```
+
+Then open `http://127.0.0.1:9982/` on the same machine:
+
+1. Paste the manifest link of each addon under **Addons** and press **Add**. For example
+   `https://v3-cinemeta.strem.io/manifest.json` for catalogs, and your Torrentio link (from its
+   configure page, with your debrid service) for streams.
+2. Tick the catalogs you want under **Catalogs**, name the library each goes into and how many
+   films, or episodes, to take.
+3. Set **rex's address**, for example `http://192.168.1.20:32400`, and press **Save and sync**.
+
+The libraries show up in your Plex apps within a few minutes. rex-stremio syncs again every six
+hours and after every save.
+
+To run it as a service, copy `rex-stremio.service` to `~/.config/systemd/user/` and run
+`systemctl --user daemon-reload && systemctl --user enable --now rex-stremio`. With Docker:
+
+```bash
+docker build -t rex-stremio .
+docker run -d --name rex-stremio -p 127.0.0.1:9982:9982 -v "$PWD/data:/data" rex-stremio
+```
+
+In Docker, set `relay_url` in `data/config.json` to an address rex can reach the container at,
+for example `http://192.168.1.20:9982` (see below).
+
+## Settings
+
+The page writes `config.json` (mode 600). You can also edit it yourself and restart:
+
+| Key | Default | What it is |
+|---|---|---|
+| `rex_url` | `http://127.0.0.1:32400` | rex's address |
+| `listen` | `127.0.0.1:9982` | Where the settings page and the relay answer. A change needs a restart |
+| `relay_url` | `http://<listen>` | The address rex reads the videos from, when rex runs on another machine or in Docker |
+| `mount` | `/mnt/rex-stremio` | The folder name rex shows for these files. Nothing is mounted |
+| `source` | `stremio` | The name rex knows this source by |
+| `cache` | `cache` | Where each title's stream check is kept |
+| `ffprobe` | `ffprobe` | The ffprobe to use |
+| `interval_minutes` | `360` | How often to sync |
+| `max_resolution` | any | `2160`, `1080` or `720`: no stream above it plays |
+| `max_size_gb` | any | No stream larger than this plays |
+| `addons` | | Each addon's manifest `url`, and its `manifest` as it was when added |
+| `catalogs` | | Each catalog's `url` (`<addon>/catalog/<movie or series>/<id>.json`), `library`, `limit` (default 50) and `title` |
+
+## Limits
+
+- Episodes come from Cinemeta and use its season and episode numbers. For a few shows these are
+  not TMDB's, which rex follows, so an episode can land in the wrong place.
+- A series catalog's **How many** counts episodes, not shows.
+- rex knows each title by the stream it was first checked with. If that link stops opening and
+  another stream plays instead, it can differ (another codec or container) and fail to play.
+  Delete the title's file in `cache/probes/` and it is checked again on the next sync.
+- Catalogs that need a question first (a search, a genre) are not listed.
+- Anyone who can reach `listen` can play through the relay. Keep it on `127.0.0.1` unless rex
+  runs elsewhere. The settings page answers only this machine, your home network and Tailscale.
+- Addon links can hold your debrid key. Keep `config.json` to yourself.
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests
+REX_BIN=/path/to/rex python3 -m unittest discover -s tests   # also syncs into a real rex
+```
+
+The fixtures are real addons' answers (Cinemeta, Torrentio over Real-Debrid, DMM Cast, Public
+Domain Movies) with keys removed.
+
+## License
+
+MIT
