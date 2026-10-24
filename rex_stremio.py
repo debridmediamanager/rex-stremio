@@ -502,6 +502,15 @@ def lenient_hls(ffprobe):
     return ("-extension_picky", "0") if b"-extension_picky" in out else ()
 
 
+def placeholder(probe):
+    """A film or an episode a minute long is an addon's message, not the title: Freedom Media's
+    links all played one 10 s clip (2026-10-24), PenguPlay's sign-in prompt is another."""
+    try:
+        return 0 < float((probe.get("format") or {}).get("duration")) < 60
+    except (TypeError, ValueError):
+        return False
+
+
 def expiry(url):
     """A googlevideo manifest names its own expiry (`/expire/<unix>/`); two hours if it does not."""
     match = re.search(r"/expire/(\d+)/", url)
@@ -1046,6 +1055,9 @@ class Sync:
                     probe = None
                 if isinstance(probe, dict) and isinstance(probe.get("format"), dict):
                     extension = CONTAINERS.get(probe["format"].get("format_name"))
+                    if extension and kind != "tv" and placeholder(probe):
+                        LOG.warning("%s: a %ss clip, not the title", vid, probe["format"].get("duration"))
+                        extension = None
                     if extension:
                         break
                     complete = False

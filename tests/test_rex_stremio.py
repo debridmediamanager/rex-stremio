@@ -1037,6 +1037,19 @@ class Relay(unittest.TestCase):
             self.get("/_relay/films-tt0111161/%s.ts" % ("0" * 20))
         self.assertEqual(unknown.exception.code, 404)
 
+    def test_a_placeholder_clip_gives_way_to_the_next(self):
+        self.pin("/eclipsia/stream/movie/tt0111161.json", 0)
+        # Freedom Media's 10 s clip, which every one of its links played, then a film.
+        probes = iter([read_json(os.path.join(FIXTURES, "probe-freedom-media-placeholder.json")),
+                       read_json(os.path.join(FIXTURES, "probe-dmm-cast-tt30144839.json"))])
+        metas = {"metas": [{"id": "tt0111161", "type": "movie", "name": "The Shawshank Redemption"}]}
+        with unittest.mock.patch.object(rex_stremio.Sync, "probe", lambda *args: next(probes)), \
+                unittest.mock.patch.object(rex_stremio, "get_json", lambda url, timeout=60: metas):
+            items = self.sync.catalog_items(self.config["catalogs"][0])
+        self.assertEqual(len(items), 1)
+        self.assertGreater(float(items[0]["media_info"]["format"]["duration"]), 60)
+        self.assertEqual([entry["key"] for entry in read_json(self.info)["refused"]], [self.base + "/hdr/eclipsia-0.mp4"])
+
     def test_a_stream_rex_cannot_take_gives_way_to_the_next(self):
         self.pin("/eclipsia/stream/movie/tt0111161.json", 0)
         probes = iter([{"format": {"format_name": "eac3"}, "streams": []},
