@@ -322,8 +322,16 @@ def opens(url, headers=None):
     request = urllib.request.Request(url, headers=dict({"User-Agent": "rex-stremio"}, **(headers or {}), Range="bytes=0-0"))
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            if response.headers.get_content_type() == "text/html":
+            kind = response.headers.get_content_type()
+            if kind == "text/html":
                 LOG.info("%s: a web page, not a video", safe_url(url))
+                return None
+            # A file that answers a Range with all of itself cannot be seeked, and rex reads every
+            # file by Range: Google's video-downloads links send the whole 9.6 GB MKV from byte 0
+            # (PlavioHD, Flix-Streams, 2026-10-24) and a player reading its end got its start.
+            playlist = "mpegurl" in kind or urllib.parse.urlsplit(response.geturl()).path.endswith(".m3u8")
+            if response.status == 200 and not playlist and int(response.headers.get("Content-Length") or 0) > 1:
+                LOG.info("%s: answers no Range, so it cannot be seeked", safe_url(url))
                 return None
             return response.geturl() if response.status in (200, 206) else None
     except Exception as error:

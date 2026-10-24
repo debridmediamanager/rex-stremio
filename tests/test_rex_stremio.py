@@ -114,10 +114,20 @@ def addon_host():
                 self.end_headers()
                 self.wfile.write(raw[first:last + 1])
                 return
+            if path.startswith("/whole/"):  # Google's video-downloads: no Range, all of the file
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mkv")
+                self.send_header("Content-Length", str(len(MP4)))
+                self.end_headers()
+                self.wfile.write(MP4)
+                return
             if path.startswith(("/page/", "/video/")):  # a web page, and a video file
                 raw = b"<!doctype html><title>Comet</title>" if path.startswith("/page/") else b"\x1a\x45\xdf\xa3"
-                self.send_response(200)
+                ranged = path.startswith("/video/") and self.headers.get("Range") == "bytes=0-0"
+                self.send_response(206 if ranged else 200)
                 self.send_header("Content-Type", "text/html; charset=utf-8" if path.startswith("/page/") else "video/x-matroska")
+                if ranged:
+                    raw, _ = raw[:1], self.send_header("Content-Range", "bytes 0-0/%d" % len(raw))
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
                 self.wfile.write(raw)
@@ -427,6 +437,8 @@ class Logic(unittest.TestCase):
         self.assertEqual(rex_stremio.ranked(comet, {}), comet)
         self.assertIsNone(rex_stremio.opens(comet[0]["url"]))
         self.assertEqual(rex_stremio.opens(base + "/video/a.mkv"), base + "/video/a.mkv")
+        # A file that answers a Range with all of itself (Google's video-downloads) cannot be seeked.
+        self.assertIsNone(rex_stremio.opens(base + "/whole/breaking-bad-s01e01.mkv"))
 
     def test_tmdb_catalog_items_are_named_by_their_imdb_ids(self):
         host, base = addon_host()
