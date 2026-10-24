@@ -351,6 +351,20 @@ class Logic(unittest.TestCase):
         self.assertEqual(sync.route_vid("/live-tv/channels/%s.m3u8" % vid), vid)
         self.assertEqual([item["display"]["title"] for item in items], [meta["name"] for meta in metas])
 
+    def test_probe_reads_hls_leniently_where_ffprobe_can(self):
+        work = tempfile.mkdtemp(prefix="rex-stremio-")
+        seen = os.path.join(work, "argv")
+        fake = os.path.join(work, "ffprobe")
+        for ffprobe, help_text, lenient in ((fake, "-extension_picky <boolean>", True), (fake + "-old", "-allowed_extensions", False)):
+            with open(ffprobe, "w") as handle:
+                handle.write("#!/bin/sh\nif [ \"$2\" = -h ]; then echo '%s'; exit 0; fi\necho \"$@\" > %s\necho '{\"format\": {}}'\n" % (help_text, seen))
+            os.chmod(ffprobe, 0o755)
+            config = rex_stremio.load_config(config_file(self, {"cache": work, "ffprobe": ffprobe, "catalogs": [
+                {"url": "https://h/catalog/tv/all.json", "title": "USA TV"}]}))
+            rex_stremio.Sync(config).probe("usa-tv-" + ABC, config["catalogs"][0])
+            with open(seen) as handle:
+                self.assertEqual("-extension_picky 0" in handle.read(), lenient)
+
     def test_stremio_item(self):
         config = rex_stremio.load_config(config_file(self, {"catalogs": [
             {"url": "https://h/catalog/series/top.json", "title": "Top shows"},

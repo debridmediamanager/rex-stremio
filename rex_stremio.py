@@ -19,6 +19,7 @@ Standard library only; ffprobe is a separate executable.
 """
 import argparse
 import copy
+import functools
 import html
 import ipaddress
 import json
@@ -457,6 +458,18 @@ def validate_config(path, values):
             pass
 
 
+@functools.lru_cache(maxsize=None)
+def lenient_hls(ffprobe):
+    """`-extension_picky 0` where the ffprobe has it. FFmpeg 7.1+ refuses a whole HLS one of
+    whose segments' format does not match its URL's extension, as PenguPlay's channels' WebVTT
+    rendition does (ffprobe 8.1, 2026-10-24); an older one refuses the unknown option."""
+    try:
+        out = subprocess.run([ffprobe, "-hide_banner", "-h", "demuxer=hls"], capture_output=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ()
+    return ("-extension_picky", "0") if b"-extension_picky" in out else ()
+
+
 def expiry(url):
     """A googlevideo manifest names its own expiry (`/expire/<unix>/`); two hours if it does not."""
     match = re.search(r"/expire/(\d+)/", url)
@@ -752,8 +765,8 @@ class Sync:
     def probe(self, vid, catalog, config=None):
         config = self.config if config is None else config
         url = rex_endpoint(config["relay_url"], "/%s/%s/%s.stream" % (catalog["directory"], catalog["slug"], vid))
-        out = subprocess.run([config["ffprobe"], "-v", "error", "-print_format", "json", "-show_format", "-show_streams",
-                              "-show_chapters", url], capture_output=True, timeout=300)
+        out = subprocess.run([config["ffprobe"], "-v", "error", *lenient_hls(config["ffprobe"]), "-print_format", "json",
+                              "-show_format", "-show_streams", "-show_chapters", url], capture_output=True, timeout=300)
         if out.returncode != 0:
             raise RuntimeError(out.stderr.decode(errors="replace").strip()[-300:] or "ffprobe failed")
         return json.loads(out.stdout)

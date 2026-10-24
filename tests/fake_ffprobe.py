@@ -15,6 +15,9 @@ class Stay(urllib.request.HTTPRedirectHandler):
         return None
 
 
+if "-h" in sys.argv:  # the options it has: an FFmpeg 7.1+'s HLS demuxer, as the real ones
+    print("  -extension_picky   <boolean>    .D......... Be picky with all extensions matching (default true)")
+    sys.exit(0)
 url = sys.argv[-1]
 try:
     urllib.request.build_opener(Stay).open(urllib.request.Request(url, method="HEAD"), timeout=60)
