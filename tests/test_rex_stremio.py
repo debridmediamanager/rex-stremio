@@ -1118,6 +1118,17 @@ class Relay(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=30) as response:
             self.assertEqual(response.status, 200)
 
+    def test_a_stream_without_a_picture_gives_way_to_the_next(self):
+        self.pin("/eclipsia/stream/movie/tt0111161.json", 0)
+        probes = iter([read_json(os.path.join(FIXTURES, "probe-pluto-mst3k-no-video.json")),
+                       read_json(os.path.join(FIXTURES, "probe-dmm-cast-tt30144839.json"))])
+        metas = {"metas": [{"id": "tt0111161", "type": "movie", "name": "The Shawshank Redemption"}]}
+        with unittest.mock.patch.object(rex_stremio.Sync, "probe", lambda *args: next(probes)), \
+                unittest.mock.patch.object(rex_stremio, "get_json", lambda url, timeout=60: metas):
+            items = self.sync.catalog_items(self.config["catalogs"][0])
+        self.assertEqual(len(items), 1)
+        self.assertTrue(any(stream["codec_type"] == "video" for stream in items[0]["media_info"]["streams"]))
+
     def test_a_placeholder_clip_gives_way_to_the_next(self):
         self.pin("/eclipsia/stream/movie/tt0111161.json", 0)
         # Freedom Media's 10 s clip, which every one of its links played, then a film.

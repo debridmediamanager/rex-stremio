@@ -1067,6 +1067,11 @@ class Sync:
                     if extension and kind != "tv" and placeholder(probe):
                         LOG.warning("%s: a %ss clip, not the title", vid, probe["format"].get("duration"))
                         extension = None
+                    if extension and not any(isinstance(stream, dict) and stream.get("codec_type") == "video"
+                                             for stream in probe.get("streams") or []):
+                        # Pluto's MST3K probed as a subtitle track alone (2026-10-24).
+                        LOG.warning("%s: no picture in it", vid)
+                        extension = None
                     if extension:
                         break
                     complete = False
