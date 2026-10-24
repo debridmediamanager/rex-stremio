@@ -20,7 +20,7 @@ feed API, as every rex source does.
 
 | You need | Why |
 |---|---|
-| rex, nightly 2026.10.24 or newer, claimed | Older builds reject what rex-stremio sends; a claimed rex lets Plex name each title. Setup: [rex](https://notes.debridmediamanager.com/guides/rex/) |
+| rex, nightly 2026.10.25 or newer, claimed | A claimed rex lets Plex name each title. Setup: [rex](https://notes.debridmediamanager.com/guides/rex/) |
 | Python 3.9 or newer and `ffprobe` (part of FFmpeg) | rex-stremio checks each title's stream once with ffprobe, because rex needs to know what is in it before it can play |
 | FFmpeg where rex runs, for addons that give HLS streams (`.m3u8`) | rex plays those by converting them (a copy, cheap). Files (`.mkv`, `.mp4`) need nothing |
 | Stream addons that give links, not torrents | rex plays files. Set your debrid service in the addon (for Torrentio, cached results only), or use one that gives links, such as DMM Cast |
@@ -66,7 +66,6 @@ The page writes `config.json` (mode 600). You can also edit it yourself and rest
 | `rex_url` | `http://127.0.0.1:32400` | rex's address |
 | `listen` | `127.0.0.1:9982` | Where the settings page and the relay answer. A change needs a restart |
 | `relay_url` | `http://<listen>` | The address rex reads the videos from, when rex runs on another machine or in Docker |
-| `mount` | `/mnt/rex-stremio` | The folder name rex shows for these files. Nothing is mounted |
 | `source` | `stremio` | The name rex knows this source by |
 | `cache` | `cache` | Where each title's stream check is kept |
 | `ffprobe` | `ffprobe` | The ffprobe to use |
