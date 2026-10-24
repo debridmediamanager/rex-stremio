@@ -18,8 +18,10 @@ One process does three things:
 Standard library only; ffprobe is a separate executable.
 """
 import argparse
+import collections
 import copy
 import functools
+import hashlib
 import html
 import ipaddress
 import json
@@ -296,11 +298,25 @@ def ranked(streams, config, pinned=None):
     return [stream for *_, stream in sorted(kept, key=lambda row: row[:3])]
 
 
-def opens(url):
+def request_headers(stream):
+    """The headers a stream's link must be asked with (`behaviorHints.proxyHeaders.request`, which
+    Stremio's streaming server sends for it). Eclipsia, Hyper, Hydra and BanglaPlex links answer
+    403 or 429 without their Referer and 206 with it (2026-10-24). Encoding is left to us: a
+    playlist is read and rewritten here."""
+    hints = stream.get("behaviorHints") if isinstance(stream, dict) else None
+    proxy = hints.get("proxyHeaders") if isinstance(hints, dict) else None
+    headers = proxy.get("request") if isinstance(proxy, dict) else None
+    if not isinstance(headers, dict):
+        return {}
+    return {str(name): str(value) for name, value in headers.items()
+            if isinstance(value, (str, int)) and str(name).lower() not in ("accept-encoding", "range", "host", "connection", "content-length")}
+
+
+def opens(url, headers=None):
     """The link a stream ends at, when it opens; None when it does not (an expired or refused link,
     or a web page: addons list their configure page, a donation or status page as a "stream", and
     Comet's unconfigured answer was nothing else, 2026-10-24)."""
-    request = urllib.request.Request(url, headers={"User-Agent": "rex-stremio", "Range": "bytes=0-0"})
+    request = urllib.request.Request(url, headers=dict({"User-Agent": "rex-stremio"}, **(headers or {}), Range="bytes=0-0"))
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             if response.headers.get_content_type() == "text/html":
@@ -535,6 +551,9 @@ class Sync:
         self.status = "not synced yet"
         self.cache, self.locks, self.guard = {}, {}, threading.Lock()
         self.cache_locks = {}
+        # The headers each item's link is asked with, and the links its playlists name, which the
+        # relay fetches with them (`relayed`): no other URL is fetched for anyone.
+        self.via, self.relayed = {}, {}
         self.config_guard = threading.RLock()
         # Feed publication and settings commits share this lock. Readers never take it, so a
         # stalled rex request cannot stop the relay or settings page from serving.
@@ -634,12 +653,29 @@ class Sync:
             pass
         return True
 
-    def store_cache(self, version, vid, value):
+    def store_cache(self, version, vid, value, headers=None):
         with self.config_guard:
             if self.config_version != version:
                 return
             with self.guard:
                 self.cache[vid] = value
+                self.via[vid] = headers or {}
+
+    def remember(self, vid, url):
+        """A link an item's playlist names, as the relay path it is fetched through."""
+        token = hashlib.sha256(url.encode()).hexdigest()[:20]
+        extension = re.search(r"\.([A-Za-z0-9]{1,5})$", urllib.parse.urlsplit(url).path)
+        with self.guard:
+            links = self.relayed.setdefault(vid, collections.OrderedDict())
+            links[token] = url
+            links.move_to_end(token)
+            while len(links) > 4096:  # a live playlist names new segments for ever
+                links.popitem(last=False)
+        return "/_relay/%s/%s.%s" % (vid, token, extension[1] if extension else "bin")
+
+    def relayed_link(self, vid, token):
+        with self.guard:
+            return (self.relayed.get(vid) or {}).get(token), self.via.get(vid) or {}
 
     def publish(self, version, method, path, body, config):
         """Make one feed request only while its generation is still current.
@@ -709,16 +745,18 @@ class Sync:
             with self.guard:
                 url, good_until = self.cache.get(vid, (None, 0))
             if time.time() < good_until:
-                checked = opens(url)
+                with self.guard:
+                    headers = self.via.get(vid) or {}
+                checked = opens(url, headers)
                 if checked:
-                    self.store_cache(version, vid, (checked, good_until))
+                    self.store_cache(version, vid, (checked, good_until), headers)
                     return checked
                 with self.guard:
                     self.cache.pop(vid, None)
             with open(self.path("info", vid, config, version)) as handle:
                 info = json.load(handle)
             for stream in ranked(self.streams(info["kind"], info["sid"], config), config, info.get("stream")):
-                url = opens(stream["url"])
+                url = opens(stream["url"], request_headers(stream))
                 if not url:
                     continue
                 if not info.get("stream"):  # the first one that opens is what the probe describes
@@ -731,7 +769,8 @@ class Sync:
                     self.cache_update(self.path("info", vid, config, version), {"stream": stream_key(stream)}, version)
                     self.cache_remove(self.path("probes", vid, config, version), version)
                     self.wake.set()
-                self.store_cache(version, vid, (url, max(time.time(), min(expiry(stream["url"]), expiry(url)) - 3600)))
+                self.store_cache(version, vid, (url, max(time.time(), min(expiry(stream["url"]), expiry(url)) - 3600)),
+                                 request_headers(stream))
                 return url
             raise RuntimeError("no stream addon has a stream that opens")
 
@@ -984,6 +1023,21 @@ class Sync:
             self.wake.clear()
 
 
+def rewrite_playlist(text, base, relayed):
+    """An HLS playlist with every link it names (segments, variants, `URI="..."` keys, maps and
+    renditions) replaced by `relayed(absolute link)`."""
+    out = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            out.append(relayed(urllib.parse.urljoin(base, stripped)))
+        elif stripped.startswith("#") and 'URI="' in stripped:
+            out.append(re.sub(r'URI="([^"]+)"', lambda match: 'URI="%s"' % relayed(urllib.parse.urljoin(base, match[1])), line))
+        else:
+            out.append(line)
+    return "\n".join(out) + "\n"
+
+
 def own_network(handler):
     """Whether a settings request comes from this machine, the home network or Tailscale, to a host
     named by its address (a name could be another site rebinding to us), and not from another
@@ -1196,6 +1250,14 @@ class App:
                     if self.command != "HEAD":
                         self.wfile.write(body)
                     return
+                relayed = re.fullmatch(r"/_relay/([A-Za-z0-9_-]+)/([0-9a-f]{20})\.[A-Za-z0-9]+", path)
+                if relayed:
+                    url, headers = app.sync.relayed_link(*relayed.groups())
+                    if not url:
+                        self.send_error(404)
+                        return
+                    self.relay(relayed[1], url, headers)
+                    return
                 vid = app.sync.route_vid(path)
                 if not vid:
                     self.send_error(404)
@@ -1206,12 +1268,68 @@ class App:
                     LOG.warning("resolve %s: %s", vid, safe_error(error))
                     self.send_error(502, "No stream addon has a stream that opens")
                     return
+                with app.sync.guard:
+                    headers = app.sync.via.get(vid) or {}
+                if headers:
+                    self.relay(vid, url, headers)
+                    return
                 self.send_response(302)
                 self.send_header("Location", url)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
 
             do_HEAD = do_GET
+
+            def relay(self, vid, url, headers):
+                """A link that needs its headers, fetched here: bytes as they come (the client's
+                Range passed on), a playlist with every link it names sent back through here."""
+                ask = dict({"User-Agent": "rex-stremio"}, **headers)
+                if self.headers.get("Range"):
+                    ask["Range"] = self.headers["Range"]
+                try:
+                    upstream = urllib.request.urlopen(urllib.request.Request(url, headers=ask), timeout=30)
+                except urllib.error.HTTPError as error:
+                    self.send_error(error.code if 400 <= error.code < 600 else 502)
+                    return
+                except Exception as error:
+                    LOG.warning("relay %s: %s", vid, safe_error(error))
+                    self.send_error(502)
+                    return
+                with upstream:
+                    kind = upstream.headers.get("Content-Type") or ""
+                    if "mpegurl" in kind.lower() or urllib.parse.urlsplit(upstream.geturl()).path.endswith(".m3u8"):
+                        text = upstream.read(MAX_JSON_BYTES).decode("utf-8", "replace")
+                        if text.lstrip().startswith("#EXTM3U"):
+                            body = rewrite_playlist(text, upstream.geturl(), lambda link: app.sync.remember(vid, link)).encode()
+                            self.send_response(200)
+                            self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+                            self.send_header("Content-Length", str(len(body)))
+                            self.end_headers()
+                            if self.command != "HEAD":
+                                self.wfile.write(body)
+                            return
+                        raw = text.encode()
+                        self.send_response(upstream.status)
+                        self.send_header("Content-Length", str(len(raw)))
+                        self.end_headers()
+                        if self.command != "HEAD":
+                            self.wfile.write(raw)
+                        return
+                    self.send_response(upstream.status)
+                    for name in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Last-Modified", "ETag"):
+                        if upstream.headers.get(name):
+                            self.send_header(name, upstream.headers[name])
+                    self.end_headers()
+                    if self.command == "HEAD":
+                        return
+                    try:
+                        while True:
+                            chunk = upstream.read(1 << 16)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
 
             def do_POST(self):
                 if not own_network(self):

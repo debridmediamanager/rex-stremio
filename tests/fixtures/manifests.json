@@ -1,5 +1,5 @@
 {
- "_provenance": "Stremio addons' real manifests, captured 2026-10-24: Cinemeta, Torrentio and DMM Cast (with a made-up Cast id; the manifest is the same for every account) as their hosts answered; httpx's as its source (src/server.ts) defines it. Public Domain Movies' was not captured: it is left out, as an addon nobody added. USA TV Next's (live TV), 2026-10-24. PenguPlay's, configured with its Live TV source (the configuration is in the URL, not the manifest), 2026-10-24.",
+ "_provenance": "Stremio addons' real manifests, captured 2026-10-24: Cinemeta, Torrentio and DMM Cast (with a made-up Cast id; the manifest is the same for every account) as their hosts answered; httpx's as its source (src/server.ts) defines it. Public Domain Movies' was not captured: it is left out, as an addon nobody added. USA TV Next's (live TV), 2026-10-24. PenguPlay's, configured with its Live TV source (the configuration is in the URL, not the manifest), 2026-10-24. Hyper's and Eclipsia's, 2026-10-24.",
  "routes": {
   "/cinemeta/manifest.json": {
    "id": "com.linvo.cinemeta",
@@ -1515,6 +1515,66 @@
     "epgProvider": true
    },
    "logo": "https://pengu.uk/penguplay-icon.png"
+  },
+  "/hyper/manifest.json": {
+   "id": "org.fayallc.hyper",
+   "version": "0.16.3",
+   "name": "Hyper",
+   "description": "Provides fast streams for movies and tv-series",
+   "logo": "https://cdn.stravo.site/5/img/logo.png",
+   "resources": [
+    {
+     "name": "stream",
+     "types": [
+      "movie",
+      "series"
+     ],
+     "idPrefixes": [
+      "tt",
+      "tmdb:",
+      "tvdb:"
+     ]
+    }
+   ],
+   "catalogs": [],
+   "types": [
+    "movie",
+    "series"
+   ],
+   "idPrefixes": [
+    "tt",
+    "tmdb:",
+    "tvdb:"
+   ],
+   "behaviorHints": {
+    "configurable": true,
+    "p2p": false,
+    "configurationRequired": false
+   }
+  },
+  "/eclipsia/manifest.json": {
+   "id": "org.eclipsia",
+   "version": "3.0.0",
+   "name": "Eclipsia",
+   "description": "Curated collection of providers",
+   "resources": [
+    "stream"
+   ],
+   "types": [
+    "movie",
+    "series",
+    "anime"
+   ],
+   "idPrefixes": [
+    "tt"
+   ],
+   "logo": "https://jsn.eclipsia.dpdns.org/logo.png",
+   "catalogs": [],
+   "behaviorHints": {
+    "configurable": true,
+    "configurationRequired": false,
+    "configureUrl": "https://jsn.eclipsia.dpdns.org/configure"
+   }
   }
  }
 }

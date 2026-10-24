@@ -1,5 +1,5 @@
 {
- "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams. USA TV Next's (a live TV addon, 2026-10-24) catalog for two channels, ABC (first 3 streams) and CW (no stream). PenguPlay's Live TV channels catalog (two channels), 2026-10-24. Comet's answer for an unconfigured install (2026-10-24): one 'stream' linking its web page (comet.feels.legal, text/html), served here from /page/.",
+ "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams. USA TV Next's (a live TV addon, 2026-10-24) catalog for two channels, ABC (first 3 streams) and CW (no stream). PenguPlay's Live TV channels catalog (two channels), 2026-10-24. Comet's answer for an unconfigured install (2026-10-24): one 'stream' linking its web page (comet.feels.legal, text/html), served here from /page/. Hyper's and Eclipsia's answers for The Shawshank Redemption (2026-10-24), their links' hosts replaced by /hdr/ on the fake host, which answers 429 without the stream's proxyHeaders as the real ones did; their proxyHeaders kept.",
  "routes": {
   "/dmm/catalog/movie/casted-movies.json": {
    "metas": [
@@ -1035,6 +1035,190 @@
      "name": "[\u274c] Comet",
      "description": "\u26a0\ufe0f OBSOLETE CONFIGURATION, PLEASE RE-CONFIGURE ON https://cometfortheweebs.midnightignite.me \u26a0\ufe0f",
      "url": "{STREAMS}/page/comet-feels-legal"
+    }
+   ]
+  },
+  "/hyper/stream/movie/tt0111161.json": {
+   "streams": [
+    {
+     "name": null,
+     "title": "\ud83d\udd12 \ud83c\udf0f 1080P | 720P | 480P \u2022 Original Audio [DASH]",
+     "externalUrl": "https://payments.stravo.site/packages/ZaetTNndpuDS/",
+     "type": "movie"
+    },
+    {
+     "name": null,
+     "title": "\ud83d\udd12 \ud83c\udf0f 1080P \u2022 Original Audio [MP4]",
+     "externalUrl": "https://payments.stravo.site/packages/ZaetTNndpuDS/",
+     "type": "movie"
+    },
+    {
+     "name": null,
+     "title": "\ud83c\udf0f 720P \u2022 Original Audio [MP4]",
+     "url": "{STREAMS}/hdr/hyper-2.mp4",
+     "behaviorHints": {
+      "notWebReady": true,
+      "videoSize": 1142545028,
+      "filename": "The Shawshank Redemption 720P [Original Audio].mp4",
+      "bingeGroup": "hyper-720P-MP4",
+      "proxyHeaders": {
+       "request": {
+        "Referer": "https://mzfi.me/",
+        "Accept": "*/*"
+       }
+      }
+     }
+    },
+    {
+     "name": null,
+     "title": "\ud83c\udf0f 480P \u2022 Original Audio [MP4]",
+     "url": "{STREAMS}/hdr/hyper-3.mp4",
+     "behaviorHints": {
+      "notWebReady": true,
+      "videoSize": 535727868,
+      "filename": "The Shawshank Redemption 480P [Original Audio].mp4",
+      "bingeGroup": "hyper-480P-MP4",
+      "proxyHeaders": {
+       "request": {
+        "Referer": "https://mzfi.me/",
+        "Accept": "*/*"
+       }
+      }
+     }
+    },
+    {
+     "name": null,
+     "title": "\ud83c\udf0f 360P \u2022 Original Audio [MP4]",
+     "url": "{STREAMS}/hdr/hyper-4.mp4",
+     "behaviorHints": {
+      "notWebReady": true,
+      "videoSize": 374335756,
+      "filename": "The Shawshank Redemption 360P [Original Audio].mp4",
+      "bingeGroup": "hyper-360P-MP4",
+      "proxyHeaders": {
+       "request": {
+        "Referer": "https://mzfi.me/",
+        "Accept": "*/*"
+       }
+      }
+     }
+    },
+    {
+     "name": null,
+     "title": "\u2728 $3/Month \u2022 Go Premium",
+     "externalUrl": "https://payments.stravo.site/packages/ZaetTNndpuDS/",
+     "type": "movie"
+    },
+    {
+     "name": null,
+     "title": "\ud83d\udde3\ufe0f  Change Audio Dub",
+     "externalUrl": "https://hyper.stravo.site/configure?reference=local#link-generator",
+     "type": "movie"
+    }
+   ]
+  },
+  "/eclipsia/stream/movie/tt0111161.json": {
+   "streams": [
+    {
+     "name": "Netmirror.",
+     "title": "1080p - Netmirror \u2022 1080p",
+     "url": "{STREAMS}/hdr/eclipsia-0.mp4",
+     "behaviorHints": {
+      "proxyHeaders": {
+       "request": {
+        "Referer": "https://videodownloader.site/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        "Accept-Encoding": "identity"
+       }
+      }
+     }
+    },
+    {
+     "name": "Nxsha.",
+     "title": "1080p - Nxsha \u2022 Nitro \u2022 English \u2022 Hindi",
+     "url": "{STREAMS}/hdr/eclipsia-1.m3u8",
+     "behaviorHints": {
+      "proxyHeaders": {
+       "request": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+        "Referer": "https://nxsha.space/",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "identity"
+       }
+      }
+     }
+    },
+    {
+     "name": "Nxsha.",
+     "title": "1080p - Nxsha \u2022 Nitro \u2022 hGuider",
+     "url": "{STREAMS}/hdr/eclipsia-2.m3u8",
+     "behaviorHints": {
+      "proxyHeaders": {
+       "request": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+        "Referer": "https://nxsha.space/",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "identity"
+       }
+      }
+     }
+    },
+    {
+     "name": "VAplayer.",
+     "title": "1080p - VAplayer",
+     "url": "{STREAMS}/hdr/eclipsia-3.m3u8",
+     "behaviorHints": {
+      "proxyHeaders": {
+       "request": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        "Referer": "https://nextgencloudfabric.com/",
+        "Origin": "https://nextgencloudfabric.com/",
+        "Accept-Encoding": "identity"
+       }
+      }
+     }
+    },
+    {
+     "name": "Vidlink.",
+     "title": "1080p - \u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\ufeffVidlink",
+     "url": "{STREAMS}/hdr/eclipsia-4.mp4"
+    },
+    {
+     "name": "Castle.",
+     "title": "720P - \u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\ufeff\u200bCastle",
+     "url": "{STREAMS}/hdr/eclipsia-5.m3u8",
+     "behaviorHints": {
+      "proxyHeaders": {
+       "request": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        "Accept": "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Fetch-Dest": "video",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "Accept-Encoding": "identity"
+       }
+      }
+     }
+    },
+    {
+     "name": "Netmirror.",
+     "title": "720p - Netmirror \u2022 720p",
+     "url": "{STREAMS}/hdr/eclipsia-6.mp4",
+     "behaviorHints": {
+      "proxyHeaders": {
+       "request": {
+        "Referer": "https://videodownloader.site/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        "Accept-Encoding": "identity"
+       }
+      }
+     }
+    },
+    {
+     "name": "Vidlink.",
+     "title": "720p - \u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\ufeff\u200bVidlink",
+     "url": "{STREAMS}/hdr/eclipsia-7.mp4"
     }
    ]
   }

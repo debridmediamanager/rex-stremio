@@ -11,6 +11,7 @@ rex binary: REX_BIN.
 """
 import json
 import os
+import re
 import socket
 import stat
 import subprocess
@@ -60,6 +61,31 @@ def stop_process(process):
             process.wait()
 
 
+# The headers each /hdr/ link of the captured answers was served with: the fake host answers 429
+# without them, as Hyper's and Eclipsia's hosts did (2026-10-24).
+NEEDS = {}
+for _route, _answer in STREMIO.items():
+    for _stream in (_answer.get("streams") or []) if isinstance(_answer, dict) else []:
+        if "/hdr/" in str(_stream.get("url")):
+            NEEDS[_stream["url"].split("/hdr/", 1)[1]] = {
+                name: value for name, value in (((_stream.get("behaviorHints") or {}).get("proxyHeaders") or {}).get("request") or {}).items()
+                if name.lower() != "accept-encoding"}
+MP4 = b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 4
+
+
+def hdr_body(name):
+    """A /hdr/ link's bytes: an MP4, or an HLS master -> media playlist -> segments, every one of
+    them named relative to its playlist."""
+    if name.endswith(".mp4"):
+        return MP4 + name.encode(), "video/mp4"
+    if name.endswith("/v/index.m3u8"):
+        return (b"#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n"
+                b"#EXTINF:2,\nseg0.ts\n#EXTINF:2,\nseg1.ts\n#EXT-X-ENDLIST\n"), "application/vnd.apple.mpegurl"
+    if name.endswith(".m3u8"):
+        return b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\n" + name.rsplit("/", 1)[-1][:-5].encode() + b"/v/index.m3u8\n", "application/x-mpegURL"
+    return b"G" * 376, "video/mp2t"
+
+
 def addon_host():
     """The captured addons on one local host, `/<addon>/...` as each answered."""
     class Handler(BaseHTTPRequestHandler):
@@ -68,6 +94,26 @@ def addon_host():
 
         def do_GET(self):
             path = urllib.parse.unquote(self.path)
+            if path.startswith("/hdr/"):
+                name = path[len("/hdr/"):]
+                link = next((link for link in NEEDS if name == link or name.startswith(link[:link.rfind(".")] + "/")), None)
+                need = NEEDS.get(link) or {}
+                if link is None or any(self.headers.get(header) != value for header, value in need.items()):
+                    self.send_error(429 if link else 404)
+                    return
+                raw, kind = hdr_body(name)
+                first, last = 0, len(raw) - 1
+                found = re.match(r"bytes=(\d+)-(\d*)$", self.headers.get("Range") or "")
+                if found:
+                    first, last = int(found[1]), min(int(found[2] or last), last)
+                self.send_response(206 if found else 200)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(last - first + 1))
+                if found:
+                    self.send_header("Content-Range", "bytes %d-%d/%d" % (first, last, len(raw)))
+                self.end_headers()
+                self.wfile.write(raw[first:last + 1])
+                return
             if path.startswith(("/page/", "/video/")):  # a web page, and a video file
                 raw = b"<!doctype html><title>Comet</title>" if path.startswith("/page/") else b"\x1a\x45\xdf\xa3"
                 self.send_response(200)
@@ -416,7 +462,7 @@ class Resolve(unittest.TestCase):
         self.opened = []
 
     def opens(self, dead):
-        def opens(url):
+        def opens(url, headers=None):
             self.opened.append(url)
             return None if url in dead else url + "#final"
         return opens
@@ -468,12 +514,12 @@ class Resolve(unittest.TestCase):
         server = ThreadingHTTPServer(("127.0.0.1", 0), rex_stremio.App(path, config, sync).handler())
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(stop_server, server)
-        with unittest.mock.patch.object(rex_stremio, "opens", lambda url: url):
+        with unittest.mock.patch.object(rex_stremio, "opens", lambda url, headers=None: url):
             with self.assertRaises(urllib.error.HTTPError) as answer:
                 urllib.request.urlopen("http://127.0.0.1:%d/wrong/carrie/carrie-1-2.mkv" % server.server_address[1])
         self.assertEqual(answer.exception.code, 404)
         opener = urllib.request.build_opener(NoRedirect)
-        with unittest.mock.patch.object(rex_stremio, "opens", lambda url: url):
+        with unittest.mock.patch.object(rex_stremio, "opens", lambda url, headers=None: url):
             with self.assertRaises(urllib.error.HTTPError) as answer:
                 opener.open("http://127.0.0.1:%d/stremio-shows/carrie/carrie-tt11540908-1-2.mkv" % server.server_address[1])
         self.assertEqual(answer.exception.code, 302)
@@ -652,7 +698,7 @@ class PartialSync(unittest.TestCase):
         with open(sync.path("info", vid), "w") as handle:
             handle.write("{truncated")
         sync.resolve = lambda item: "http://media.example/file.mkv"
-        with unittest.mock.patch.object(rex_stremio, "opens", lambda url: url):
+        with unittest.mock.patch.object(rex_stremio, "opens", lambda url, headers=None: url):
             items = sync.catalog_items(config["catalogs"][0])
         self.assertEqual([item["id"] for item in items], ["st-" + vid])
         self.assertEqual(read_json(sync.path("info", vid))["sid"], "tt34384900")
@@ -676,7 +722,7 @@ class PartialSync(unittest.TestCase):
         with open(sync.path("probes", vid), "w") as handle:
             handle.write("{truncated")
         sync.resolve = lambda item: "http://media.example/file.m3u8"
-        with unittest.mock.patch.object(rex_stremio, "opens", lambda url: url):
+        with unittest.mock.patch.object(rex_stremio, "opens", lambda url, headers=None: url):
             items = sync.catalog_items(config["catalogs"][0])
         self.assertEqual([item["id"] for item in items], ["st-" + vid])
         self.assertEqual(read_json(sync.path("probes", vid))["format"]["format_name"], "hls")
@@ -883,6 +929,58 @@ class Concurrency(unittest.TestCase):
         self.assertFalse(worker.is_alive())
 
 
+class Relay(unittest.TestCase):
+    """Links that need their addon's headers (`proxyHeaders`), and links that are no video."""
+
+    def setUp(self):
+        self.host, self.base = addon_host()
+        self.addCleanup(stop_server, self.host)
+        work = tempfile.mkdtemp(prefix="rex-stremio-")
+        path = config_file(self, {"cache": work, "addons": [addon(self.base, "hyper"), addon(self.base, "eclipsia")],
+                                  "catalogs": [{"url": self.base + "/cinemeta/catalog/movie/top.json", "title": "Films"}]})
+        self.config = rex_stremio.load_config(path)
+        self.sync = rex_stremio.Sync(self.config)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), rex_stremio.App(path, self.config, self.sync).handler())
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(stop_server, server)
+        self.relay = "http://127.0.0.1:%d" % server.server_address[1]
+        self.info = self.sync.path("info", "films-tt0111161")
+
+    def pin(self, answer, at):
+        stream = json.loads(json.dumps(STREMIO[answer]["streams"][at]).replace("{STREAMS}", self.base))
+        with open(self.info, "w") as handle:
+            json.dump({"kind": "movie", "sid": "tt0111161", "stream": rex_stremio.stream_key(stream)}, handle)
+        return stream
+
+    def get(self, path, **headers):
+        request = urllib.request.Request(self.relay + path, headers=headers)
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, response.read()
+
+    def test_a_link_that_needs_headers_is_relayed_with_them(self):
+        stream = self.pin("/hyper/stream/movie/tt0111161.json", 2)
+        with self.assertRaises(urllib.error.HTTPError) as refused:  # the link alone, as rex read it before
+            urllib.request.urlopen(stream["url"], timeout=30)
+        self.assertEqual(refused.exception.code, 429)
+        # Its own bytes, not another addon's link that needs nothing.
+        self.assertEqual(self.get("/stremio-films/films/films-tt0111161.stream"), (200, MP4 + b"hyper-2.mp4"))
+        self.assertEqual(self.get("/stremio-films/films/films-tt0111161.stream", Range="bytes=4-11"), (206, MP4[4:12]))
+
+    def test_a_playlist_that_needs_headers_names_only_relayed_links(self):
+        self.pin("/eclipsia/stream/movie/tt0111161.json", 5)  # Castle's HLS
+        status, master = self.get("/stremio-films/films/films-tt0111161.stream")
+        variant = [line for line in master.decode().splitlines() if line and not line.startswith("#")]
+        self.assertEqual(len(variant), 1)
+        self.assertRegex(variant[0], r"^/_relay/films-tt0111161/[0-9a-f]{20}\.m3u8$")
+        media = self.get(variant[0])[1].decode()
+        self.assertRegex(media, r'URI="/_relay/films-tt0111161/[0-9a-f]{20}\.bin"')
+        segments = [line for line in media.splitlines() if line and not line.startswith("#")]
+        self.assertEqual([self.get(segment) for segment in segments], [(200, b"G" * 376)] * 2)
+        with self.assertRaises(urllib.error.HTTPError) as unknown:  # nothing a playlist did not name
+            self.get("/_relay/films-tt0111161/%s.ts" % ("0" * 20))
+        self.assertEqual(unknown.exception.code, 404)
+
+
 @unittest.skipUnless(os.path.exists(os.environ.get("REX_BIN", "/nonexistent")), "REX_BIN names no rex binary")
 class AgainstRex(unittest.TestCase):
     TOKEN = "REX-STREMIO-TEST"
@@ -927,7 +1025,7 @@ class AgainstRex(unittest.TestCase):
         self.addCleanup(stop_server, server)
         self.relay = relay
         # The captured links are real hosts' (and their keys redacted): taken as opening, as they did.
-        patch = unittest.mock.patch.object(rex_stremio, "opens", lambda url: url)
+        patch = unittest.mock.patch.object(rex_stremio, "opens", lambda url, headers=None: url)
         patch.start()
         self.addCleanup(patch.stop)
 
