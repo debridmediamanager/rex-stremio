@@ -16,6 +16,19 @@ play, rex-stremio asks your stream addons for a link, as Stremio does, and rex p
 It is one Python file (standard library only) that runs beside rex and talks to it through rex's
 feed API, as every rex source does.
 
+## Screenshots
+
+The settings page with example addons, selected catalogs and playback limits.
+
+![Light appearance: Cinemeta and Torrentio addons, catalog libraries and playback settings](docs/screenshots/settings-light.png)
+
+<details>
+<summary>Dark appearance</summary>
+
+![Dark appearance of the same rex-stremio settings page](docs/screenshots/settings-dark.png)
+
+</details>
+
 ## What you need
 
 | You need | Why |
