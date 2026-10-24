@@ -121,6 +121,15 @@ def addon_host():
                 self.end_headers()
                 self.wfile.write(MP4)
                 return
+            if path.startswith("/video/") and path.endswith(".m3u8"):  # usatv's ABC's master
+                with open(os.path.join(FIXTURES, "hls-master-usatv-abc.m3u8"), "rb") as handle:
+                    raw = handle.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-mpegURL")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+                return
             if path.startswith(("/page/", "/video/")):  # a web page, and a video file
                 raw = b"<!doctype html><title>Comet</title>" if path.startswith("/page/") else b"\x1a\x45\xdf\xa3"
                 ranged = path.startswith("/video/") and self.headers.get("Range") == "bytes=0-0"
@@ -485,6 +494,22 @@ class Logic(unittest.TestCase):
         with unittest.mock.patch.object(rex_stremio, "opens", lambda url, headers=None: url):
             self.assertEqual(sync.resolve("one-pace-onepace_complete_series-1-1"), base + "/video/onepace-0.mkv")
 
+    def test_an_hls_master_is_its_best_variant(self):
+        with open(os.path.join(FIXTURES, "hls-master-usatv-abc.m3u8")) as handle:
+            master = handle.read()  # usatv's ABC: five variants, 360p to two of 720p
+        base = "https://content.uplynk.com/channel/39919d3f7a074eefa8bf579214e952f9.m3u8"
+        one = rex_stremio.one_variant(master, base)
+        variants = [line for line in one.splitlines() if line.startswith("#EXT-X-STREAM-INF")]
+        self.assertEqual(len(variants), 1)
+        self.assertIn("RESOLUTION=1280x720,BANDWIDTH=6617500", variants[0])  # the better of the two 720p
+        self.assertTrue(one.rstrip().endswith("/e.m3u8?pbs=PBS"))
+        # The renditions it names stay; the I-frame playlist goes.
+        self.assertIn('GROUP-ID="aac"', one)
+        self.assertIn('GROUP-ID="ccs"', one)
+        self.assertNotIn("I-FRAME", one)
+        self.assertIn("RESOLUTION=854x480", rex_stremio.one_variant(master, base, 480))
+        self.assertIsNone(rex_stremio.one_variant("#EXTM3U\n#EXTINF:4,\nseg0.ts\n", base))
+
     def test_stremio_item(self):
         config = rex_stremio.load_config(config_file(self, {"catalogs": [
             {"url": "https://h/catalog/series/top.json", "title": "Top shows"},
@@ -537,7 +562,7 @@ class Resolve(unittest.TestCase):
         self.assertEqual(self.opened, [TORRENTIO[1]["url"]])
 
     def test_pinned_gone_falls_back(self):
-        with open(self.sync.path("probes", "carrie-1-2"), "w") as handle:
+        with open(self.sync.path(rex_stremio.PROBES, "carrie-1-2"), "w") as handle:
             json.dump({"format": {}}, handle)
         with open(self.sync.path("info", "carrie-1-2"), "w") as handle:
             json.dump({"kind": "series", "sid": "tt11540908:1:2", "stream": rex_stremio.stream_key(TORRENTIO[2])}, handle)
@@ -546,7 +571,7 @@ class Resolve(unittest.TestCase):
         self.assertEqual(self.opened, [TORRENTIO[2]["url"], TORRENTIO[0]["url"]])
         # What plays now is pinned and probed again on a sync started at once, so rex learns it.
         self.assertEqual(read_json(self.sync.path("info", "carrie-1-2"))["stream"], rex_stremio.stream_key(TORRENTIO[0]))
-        self.assertFalse(os.path.exists(self.sync.path("probes", "carrie-1-2")))
+        self.assertFalse(os.path.exists(self.sync.path(rex_stremio.PROBES, "carrie-1-2")))
         self.assertTrue(self.sync.wake.is_set())
 
     def test_nothing_opens(self):
@@ -759,7 +784,7 @@ class PartialSync(unittest.TestCase):
             items = sync.catalog_items(config["catalogs"][0])
         self.assertEqual([item["id"] for item in items], ["st-" + vid])
         self.assertEqual(read_json(sync.path("info", vid))["sid"], "tt34384900")
-        self.assertEqual(read_json(sync.path("probes", vid))["format"]["format_name"], "hls")
+        self.assertEqual(read_json(sync.path(rex_stremio.PROBES, vid))["format"]["format_name"], "hls")
 
     def test_corrupt_probe_is_repaired_by_real_handler_and_ffprobe(self):
         host, base = addon_host()
@@ -776,13 +801,13 @@ class PartialSync(unittest.TestCase):
         vid = "top-films-tt34384900"
         with open(sync.path("info", vid), "w") as handle:
             json.dump({"kind": "movie", "sid": "tt34384900"}, handle)
-        with open(sync.path("probes", vid), "w") as handle:
+        with open(sync.path(rex_stremio.PROBES, vid), "w") as handle:
             handle.write("{truncated")
         sync.resolve = lambda item: "http://media.example/file.m3u8"
         with unittest.mock.patch.object(rex_stremio, "opens", lambda url, headers=None: url):
             items = sync.catalog_items(config["catalogs"][0])
         self.assertEqual([item["id"] for item in items], ["st-" + vid])
-        self.assertEqual(read_json(sync.path("probes", vid))["format"]["format_name"], "hls")
+        self.assertEqual(read_json(sync.path(rex_stremio.PROBES, vid))["format"]["format_name"], "hls")
 
     def test_incomplete_catalog_upserts_healthy_items_without_snapshot(self):
         path = config_file(self, {"catalogs": [
@@ -913,7 +938,7 @@ class Concurrency(unittest.TestCase):
             return {"format": {"format_name": "hls"}}
 
         result = []
-        worker = threading.Thread(target=lambda: result.append(sync.cached("probes", "item", make_probe,
+        worker = threading.Thread(target=lambda: result.append(sync.cached(rex_stremio.PROBES, "item", make_probe,
                                                                              config, version=0)))
         worker.start()
         self.assertTrue(entered.wait(5))
@@ -922,7 +947,7 @@ class Concurrency(unittest.TestCase):
         worker.join(5)
         self.assertFalse(worker.is_alive())
         self.assertEqual(result, [{"format": {"format_name": "hls"}}])
-        self.assertFalse(os.path.exists(sync.path("probes", "item")))
+        self.assertFalse(os.path.exists(sync.path(rex_stremio.PROBES, "item")))
 
     def test_old_generation_remove_cannot_delete_after_save(self):
         path = config_file(self, {"cache": tempfile.mkdtemp(prefix="rex-stremio-cache-")})
@@ -1036,6 +1061,17 @@ class Relay(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as unknown:  # nothing a playlist did not name
             self.get("/_relay/films-tt0111161/%s.ts" % ("0" * 20))
         self.assertEqual(unknown.exception.code, 404)
+
+    def test_an_hls_master_is_relayed_as_its_best_variant(self):
+        stream = dict(USATV[0], url=self.base + "/video/abc-master.m3u8")
+        with open(self.info, "w") as handle:
+            json.dump({"kind": "tv", "sid": "ustv-abc", "stream": rex_stremio.stream_key(stream)}, handle)
+        with unittest.mock.patch.object(rex_stremio.Sync, "streams", lambda *args, **kwargs: [stream]):
+            status, body = self.get("/stremio-films/films/films-tt0111161.stream")
+        variants = [line for line in body.decode().splitlines() if line.startswith("#EXT-X-STREAM-INF")]
+        self.assertEqual((status, len(variants)), (200, 1))
+        self.assertIn("RESOLUTION=1280x720,BANDWIDTH=6617500", variants[0])
+        self.assertTrue(body.decode().rstrip().endswith("https://content-aeuc1-up-1.uplynk.com/channel/39919d3f7a074eefa8bf579214e952f9/e.m3u8?pbs=PBS"))
 
     def test_a_placeholder_clip_gives_way_to_the_next(self):
         self.pin("/eclipsia/stream/movie/tt0111161.json", 0)
@@ -1174,7 +1210,7 @@ class AgainstRex(unittest.TestCase):
         with self.sync.config_guard:
             self.sync.config["catalogs"].append(new_catalog)
         vid = "new-top-tt34384900"
-        rex_stremio.write_json(self.sync.path("probes", vid), read_json(os.path.join(FIXTURES, "probe-top-films-tt34384900.json")))
+        rex_stremio.write_json(self.sync.path(rex_stremio.PROBES, vid), read_json(os.path.join(FIXTURES, "probe-top-films-tt34384900.json")))
         dmm_url = "/dmm/catalog/movie/casted-movies.json"
         original = STREMIO[dmm_url]
         STREMIO[dmm_url] = dict(original, metas=[])

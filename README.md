@@ -103,6 +103,7 @@ The page writes `config.json` (mode 600). You can also edit it yourself and rest
   not listed.
 - Links that need headers (an addon's `proxyHeaders`) play through rex-stremio, which then carries
   their bytes; a link that is a web page is skipped, and one rex cannot play is set aside for a day.
+  An HLS link with several qualities is relayed as the best one within your limit.
 - A live channel cannot be paused far back, resumed later or marked watched, and plays only in
   apps that ask rex for a conversion (Plex apps, Plezy; Plex Web is not tested). Channels the addon
   gives no working stream for, and DRM-protected ones, are left out.

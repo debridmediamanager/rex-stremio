@@ -65,6 +65,10 @@ CINEMETA = "https://v3-cinemeta.strem.io"
 # no IMDb id; when no added addon's meta does, the TMDB addon's does (2026-10-24).
 TMDB_META = "https://tmdb.elfhosted.com"
 
+# Where each item's probe is kept. "probes2" since an HLS master is relayed as its best variant
+# alone: a probe of the whole master names other streams, so every item is probed once more.
+PROBES = "probes2"
+
 # ffprobe's container -> the extension rex takes the file by (an HLS playlist is `.m3u8`).
 CONTAINERS = {"hls": "m3u8", "matroska,webm": "mkv", "mov,mp4,m4a,3gp,3g2,mj2": "mp4", "mpegts": "ts", "avi": "avi"}
 
@@ -735,7 +739,7 @@ class Sync:
         refused = (refused + [{"key": info["stream"], "at": now}])[-20:]
         LOG.warning("%s: %s set aside, trying the next stream", vid, safe_stream_key(info["stream"]))
         self.cache_update(path, {"stream": None, "refused": refused}, version)
-        self.cache_remove(self.path("probes", vid, config, version), version)
+        self.cache_remove(self.path(PROBES, vid, config, version), version)
         with self.guard:
             self.cache.pop(vid, None)
         return True
@@ -856,7 +860,7 @@ class Sync:
                     # play may fail. It is pinned, probed and pushed again on a sync started now.
                     LOG.warning("%s: probed stream gone, playing %s", vid, safe_stream_key(stream_key(stream)))
                     self.cache_update(self.path("info", vid, config, version), {"stream": stream_key(stream)}, version)
-                    self.cache_remove(self.path("probes", vid, config, version), version)
+                    self.cache_remove(self.path(PROBES, vid, config, version), version)
                     self.wake.set()
                 self.store_cache(version, vid, (url, max(time.time(), min(expiry(stream["url"]), expiry(url)) - 3600)),
                                  request_headers(stream))
@@ -892,7 +896,7 @@ class Sync:
                 return None
             expected = info.get("extension")
             if not expected:
-                probe_path = os.path.join(cache, "probes", vid + ".json")
+                probe_path = os.path.join(cache, PROBES, vid + ".json")
                 with open(probe_path) as handle:
                     probe = json.load(handle)
                 expected = CONTAINERS.get((probe.get("format") or {}).get("format_name"))
@@ -1012,7 +1016,7 @@ class Sync:
                 # Repair it before the probe so the next relay request sees a usable identity.
                 info = expected_info
                 self.cache_write(info_path, info, version)
-                self.cache_remove(self.path("probes", vid, config, version), version)
+                self.cache_remove(self.path(PROBES, vid, config, version), version)
             info_valid = isinstance(info, dict) and info.get("kind") == kind and info.get("sid") == sid
             if info_valid and (info.get("also") or []) != list(also):
                 self.cache_update(info_path, {"also": list(also)}, version)
@@ -1022,12 +1026,12 @@ class Sync:
                 complete = False
                 info = expected_info
                 self.cache_write(info_path, info, version)
-                self.cache_remove(self.path("probes", vid, config, version), version)
+                self.cache_remove(self.path(PROBES, vid, config, version), version)
 
             # A corrupt or shape-invalid derived probe is repairable. Remove just that record
             # and ask ffprobe once more; a real probe failure is still recorded as a partial
             # catalog without repeatedly hammering the source.
-            probe_path = self.path("probes", vid, config, version)
+            probe_path = self.path(PROBES, vid, config, version)
             extension = None
             # A stream ffprobe cannot read or rex cannot take gives way to the next one: an
             # addon's best-labelled link was a .zip of another show (Eclipsia, 2026-10-24), and
@@ -1037,7 +1041,7 @@ class Sync:
                 for attempt in range(2):
                     had_cache = os.path.isfile(probe_path)
                     try:
-                        probe = self.cached("probes", vid, lambda: self.probe(vid, catalog, config), config, version)
+                        probe = self.cached(PROBES, vid, lambda: self.probe(vid, catalog, config), config, version)
                     except Exception as error:  # no stream that opens, or one ffprobe could not read
                         complete = False
                         if attempt == 0 and had_cache:
@@ -1144,6 +1148,31 @@ class Sync:
                 interval = self.config["interval_minutes"]
             self.wake.wait(interval * 60)
             self.wake.clear()
+
+
+def one_variant(text, base, cap=None):
+    """An HLS master as its best variant alone (the highest within `cap`, then the most bandwidth),
+    with the renditions it names and every link absolute; None for a media playlist or a master
+    of one. rex takes a master's first video stream, the lowest or an unreadable variant (PlavioHD's
+    height 0, PenguPlay's SD), and FFmpeg opened all of PenguPlay's four before a picture (20-30 s)."""
+    lines = text.splitlines()
+    variants = []
+    for at, line in enumerate(lines):
+        if line.startswith("#EXT-X-STREAM-INF"):
+            uri = next((other.strip() for other in lines[at + 1:] if other.strip() and not other.startswith("#")), None)
+            height = re.search(r"RESOLUTION=\d+x(\d+)", line)
+            bandwidth = re.search(r"(?<![-A-Z])BANDWIDTH=(\d+)", line)
+            if uri:
+                variants.append((line, uri, int(height[1]) if height else 0, int(bandwidth[1]) if bandwidth else 0))
+    if len(variants) < 2:
+        return None
+    fitting = [variant for variant in variants if not cap or variant[2] <= int(cap)] or variants
+    line, uri, _, _ = max(fitting, key=lambda variant: variant[2:])
+    groups = set(re.findall(r'(?:AUDIO|VIDEO|SUBTITLES|CLOSED-CAPTIONS)="([^"]+)"', line))
+    kept = ["#EXTM3U"] + [other for other in lines if other.startswith(("#EXT-X-VERSION", "#EXT-X-INDEPENDENT-SEGMENTS"))]
+    kept += [other for other in lines if other.startswith("#EXT-X-MEDIA:")
+             and (re.search(r'GROUP-ID="([^"]+)"', other) or [None, None])[1] in groups]
+    return rewrite_playlist("\n".join(kept + [line, uri]), base, lambda link: link)
 
 
 def rewrite_playlist(text, base, relayed):
@@ -1396,12 +1425,34 @@ class App:
                 if headers:
                     self.relay(vid, url, headers)
                     return
+                master = self.trimmed(url) if urllib.parse.urlsplit(url).path.endswith(".m3u8") else None
+                if master:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+                    self.send_header("Content-Length", str(len(master)))
+                    self.end_headers()
+                    if self.command != "HEAD":
+                        self.wfile.write(master)
+                    return
                 self.send_response(302)
                 self.send_header("Location", url)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
 
             do_HEAD = do_GET
+
+            def trimmed(self, url):
+                """An HLS master's best variant alone (`one_variant`), or None to send rex to it."""
+                try:
+                    request = urllib.request.Request(url, headers={"User-Agent": "rex-stremio"})
+                    with urllib.request.urlopen(request, timeout=30) as response:
+                        text = response.read(MAX_JSON_BYTES).decode("utf-8", "replace")
+                        final = response.geturl()
+                except Exception as error:
+                    LOG.info("%s: %s", safe_url(url), safe_error(error))
+                    return None
+                master = one_variant(text, final, app.config.get("max_resolution")) if text.lstrip().startswith("#EXTM3U") else None
+                return master.encode() if master else None
 
             def relay(self, vid, url, headers):
                 """A link that needs its headers, fetched here: bytes as they come (the client's
@@ -1423,6 +1474,7 @@ class App:
                     if "mpegurl" in kind.lower() or urllib.parse.urlsplit(upstream.geturl()).path.endswith(".m3u8"):
                         text = upstream.read(MAX_JSON_BYTES).decode("utf-8", "replace")
                         if text.lstrip().startswith("#EXTM3U"):
+                            text = one_variant(text, upstream.geturl(), app.config.get("max_resolution")) or text
                             body = rewrite_playlist(text, upstream.geturl(), lambda link: app.sync.remember(vid, link)).encode()
                             self.send_response(200)
                             self.send_header("Content-Type", "application/vnd.apple.mpegurl")
