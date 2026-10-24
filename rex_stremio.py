@@ -62,7 +62,13 @@ CINEMETA = "https://v3-cinemeta.strem.io"
 # ffprobe's container -> the extension rex takes the file by (an HLS playlist is `.m3u8`).
 CONTAINERS = {"hls": "m3u8", "matroska,webm": "mkv", "mov,mp4,m4a,3gp,3g2,mj2": "mp4", "mpegts": "ts", "avi": "avi"}
 
-RESOLUTIONS = [(r"2160p|\b4k\b|\buhd\b", 2160), (r"1440p", 1440), (r"1080p", 1080), (r"720p", 720), (r"576p|480p|\bsd\b", 480)]
+RESOLUTIONS = [(r"2160p|\b4k\b|\buhd\b", 2160), (r"1440p", 1440), (r"1080p|\bfhd\b", 1080), (r"720p|\bhd\b", 720),
+               (r"576p|480p|\bsd\b", 480)]
+
+# A catalog's Stremio type -> its default library and the kind of rex library that holds it. A
+# live channel (`tv`) is a film-like row: nothing identifies it, the addon's `display` names it.
+LIBRARIES = {"movie": "Stremio Films", "series": "Stremio Shows", "tv": "Live TV"}
+REX_KINDS = {"movie": "movies", "series": "shows", "tv": "movies"}
 
 
 def slug(text):
@@ -193,7 +199,7 @@ def serves(manifest, resource, kind, sid):
 
 
 def catalogs_of(manifest):
-    """The catalogs of films and series an addon lists without being asked something first (a
+    """The catalogs of films, series and live channels an addon lists without being asked something first (a
     search catalog needs a query)."""
     if not isinstance(manifest, dict):
         return []
@@ -215,7 +221,7 @@ def catalogs_of(manifest):
             continue
         if isinstance(extra_required, list):
             required += [name for name in extra_required if isinstance(name, str)]
-        if (catalog.get("type") in ("movie", "series") and isinstance(catalog.get("id"), str)
+        if (catalog.get("type") in LIBRARIES and isinstance(catalog.get("id"), str)
                 and catalog["id"] and not required):
             out.append({"type": catalog["type"], "id": catalog["id"], "name": catalog.get("name") or catalog["id"]})
     return out
@@ -370,10 +376,10 @@ def load_config(path):
         url = catalog.get("url", "")
         if not isinstance(url, str):
             raise ValueError("catalog URL must be a string")
-        found = re.fullmatch(r"(https?://.+?)/catalog/(movie|series)/([^/]+?)\.json", url)
+        found = re.fullmatch(r"(https?://.+?)/catalog/(movie|series|tv)/([^/]+?)\.json", url)
         if not found:
-            raise ValueError("not a Stremio catalog URL (<addon>/catalog/<movie|series>/<id>.json)")
-        catalog = dict({"library": "Stremio Films" if found[2] == "movie" else "Stremio Shows", "limit": 50}, **catalog)
+            raise ValueError("not a Stremio catalog URL (<addon>/catalog/<movie|series|tv>/<id>.json)")
+        catalog = dict({"library": LIBRARIES[found[2]], "limit": 50}, **catalog)
         if not isinstance(catalog.get("library"), str) or not catalog["library"].strip():
             raise ValueError("catalog library must be a name")
         try:
@@ -417,7 +423,7 @@ def load_config(path):
         catalogs.append(catalog)
     libraries = {}
     for catalog in catalogs:
-        key = (catalog["directory"], catalog["type"])
+        key = (catalog["directory"], REX_KINDS[catalog["type"]])
         previous = libraries.setdefault(key, catalog["library"])
         if previous != catalog["library"]:
             raise ValueError("catalog directory has conflicting libraries")
@@ -458,7 +464,8 @@ def expiry(url):
 
 
 def stremio_item(config, catalog, vid, imdb, meta, video, probe, extension):
-    """One feed item (`docs/feed-api.md`): placed by its IMDb id, dressed by the catalog."""
+    """One feed item (`docs/feed-api.md`): placed by its IMDb id, dressed by the catalog. A live
+    channel has no IMDb id (`imdb` is the addon's own id): it goes unplaced, named by `display`."""
     path = "%s/%s/%s.%s" % (catalog["directory"], catalog["slug"], vid, extension)
     pushed = {
         "id": "st-" + vid,
@@ -466,9 +473,10 @@ def stremio_item(config, catalog, vid, imdb, meta, video, probe, extension):
         "file": "%s/%s" % (config["mount"].rstrip("/"), path),
         "name": meta.get("name") or imdb,
         "release": "stremio:" + imdb,
-        "ids": {"imdb": imdb},
         "media_info": probe,
     }
+    if catalog["type"] != "tv":
+        pushed["ids"] = {"imdb": imdb}
     size = (probe.get("format") or {}).get("size")
     try:
         size = int(size) if size else None
@@ -478,7 +486,10 @@ def stremio_item(config, catalog, vid, imdb, meta, video, probe, extension):
         pushed["size"] = size
     released = lambda value: str(value or "")[:10] if re.match(r"\d{4}-\d{2}-\d{2}", str(value or "")) else None
     year = re.match(r"\d{4}", str(meta.get("year") or meta.get("releaseInfo") or ""))
-    if catalog["type"] == "movie":
+    if catalog["type"] == "tv":
+        display = {"title": meta.get("name"), "summary": meta.get("description"),
+                   "thumb": meta.get("poster") or meta.get("logo"), "art": meta.get("background")}
+    elif catalog["type"] == "movie":
         pushed["kind"] = "movie"
         display = {"title": meta.get("name"), "summary": meta.get("description"), "thumb": meta.get("poster"),
                    "art": meta.get("background"), "date": released(meta.get("released")) or (year and year[0])}
@@ -639,7 +650,7 @@ class Sync:
         config = self.config if config is None else config
         directories = {}
         for catalog in config["catalogs"]:
-            kind = "movies" if catalog["type"] == "movie" else "shows"
+            kind = REX_KINDS[catalog["type"]]
             directories.setdefault(catalog["directory"], {"name": catalog["directory"]}).setdefault(kind, catalog["library"])
         answer = self.rex("PUT", "/rex/sources/" + config["source"],
                           {"url": config["relay_url"], "mount": config["mount"], "directories": list(directories.values())}, config)
@@ -715,7 +726,7 @@ class Sync:
         if not catalog:
             return None
         suffix = vid[len(catalog_slug) + 1:] if vid.startswith(catalog_slug + "-") else ""
-        pattern = r"tt\d+" if catalog["type"] == "movie" else r"tt\d+-\d+-\d+"
+        pattern = {"movie": r"tt\d+", "series": r"tt\d+-\d+-\d+", "tv": r"[A-Za-z0-9_-]+"}[catalog["type"]]
         if not re.fullmatch(pattern, suffix):
             return None
         info_path = os.path.join(cache, "info", vid + ".json")
@@ -766,9 +777,17 @@ class Sync:
             if not isinstance(meta, dict):
                 complete = False
                 continue
-            imdb = str(meta.get("imdb_id") or meta.get("id") or "").split(":")[0]
             if len(wanted) >= limit:
                 continue
+            if kind == "tv":
+                # A channel is known only by the addon's own id (`ustv-…`, `pp-live:…`), which is
+                # what its stream is asked by; the item id keeps only what a relay path can hold.
+                if not isinstance(meta.get("id"), str) or not meta["id"]:
+                    complete = False
+                    continue
+                wanted.append(("%s-%s" % (catalog["slug"], re.sub(r"[^A-Za-z0-9_-]", "-", meta["id"])), meta["id"], meta, None))
+                continue
+            imdb = str(meta.get("imdb_id") or meta.get("id") or "").split(":")[0]
             if not re.fullmatch(r"tt\d+", imdb):
                 # A non-IMDb row cannot be represented in rex. Keep the old row until a
                 # later complete catalog response tells us it is really gone.
@@ -868,7 +887,7 @@ class Sync:
                     complete = False
                     continue
             try:
-                items.append(stremio_item(config, catalog, vid, sid.split(":")[0], meta, video, probe, extension))
+                items.append(stremio_item(config, catalog, vid, sid if kind == "tv" else sid.split(":")[0], meta, video, probe, extension))
             except Exception as error:
                 complete = False
                 LOG.warning("%s: %s", vid, safe_error(error))
@@ -1030,10 +1049,10 @@ def page(config, status):
         for catalog in catalogs_of(manifest):
             url = "%s/catalog/%s/%s.json" % (addon_base(addon["url"]), catalog["type"], catalog["id"])
             chosen = taken.get(url) or {}
-            library = chosen.get("library") or ("Stremio Films" if catalog["type"] == "movie" else "Stremio Shows")
+            library = chosen.get("library") or LIBRARIES[catalog["type"]]
             addon_name = manifest.get("name") or "addon"
             name = "%s: %s (%s)" % (addon_name, catalog["name"],
-                                    "films" if catalog["type"] == "movie" else "episodes")
+                                    {"movie": "films", "series": "episodes", "tv": "channels"}[catalog["type"]])
             catalogs.append('<tr><td><input type="checkbox" id="c%d" name="take" value="%d"%s><input type="hidden" name="url%d" value="%s">'
                             '<input type="hidden" name="title%d" value="%s"><input type="hidden" name="slug%d" value="%s">'
                             '<input type="hidden" name="directory%d" value="%s"></td><td><label for="c%d">%s</label></td>'

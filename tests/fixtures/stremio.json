@@ -1,5 +1,5 @@
 {
- "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams.",
+ "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams. USA TV Next's (a live TV addon, 2026-10-24) catalog for two channels, ABC (first 3 streams) and CW (no stream). PenguPlay's Live TV channels catalog (two channels), 2026-10-24.",
  "routes": {
   "/dmm/catalog/movie/casted-movies.json": {
    "metas": [
@@ -923,6 +923,111 @@
    "cacheMaxAge": 604800,
    "staleRevalidate": 7776000,
    "staleError": 31104000
+  },
+  "/usatv/catalog/tv/all.json": {
+   "metas": [
+    {
+     "id": "ustv-1a0b178a-23c5-4c06-9217-ceabe2897343",
+     "tvgId": "",
+     "name": "ABC",
+     "country": "USA",
+     "countryCode": "us",
+     "genre": "Local",
+     "logo": "https://raw.githubusercontent.com/yowmamasita/usa-tv-next/main/public/logos/usa/abc-us.png",
+     "time": null,
+     "type": "tv",
+     "poster": "https://raw.githubusercontent.com/yowmamasita/usa-tv-next/main/public/posters/usa/abc-us.png",
+     "genres": [
+      "Local"
+     ]
+    },
+    {
+     "id": "ustv-a931a508-de1f-4c1e-81eb-f1abffd5e147",
+     "tvgId": "",
+     "name": "CW ",
+     "country": "USA",
+     "countryCode": "us",
+     "genre": "Local",
+     "logo": "https://raw.githubusercontent.com/yowmamasita/usa-tv-next/main/public/logos/usa/cw-us.png",
+     "time": null,
+     "type": "tv",
+     "poster": "https://raw.githubusercontent.com/yowmamasita/usa-tv-next/main/public/posters/usa/cw-us.png",
+     "genres": [
+      "Local"
+     ]
+    }
+   ]
+  },
+  "/usatv/stream/tv/ustv-1a0b178a-23c5-4c06-9217-ceabe2897343.json": {
+   "streams": [
+    {
+     "url": "https://content.uplynk.com/channel/39919d3f7a074eefa8bf579214e952f9.m3u8",
+     "behaviorHints": {
+      "notWebReady": true
+     },
+     "name": "HD",
+     "description": "HV:CONTENT"
+    },
+    {
+     "url": "https://content.uplynk.com/channel/9d4e02c9c3544c269d32e6b316792c8f.m3u8",
+     "behaviorHints": {
+      "notWebReady": true
+     },
+     "name": "SD",
+     "description": "HV:CONTENT"
+    },
+    {
+     "url": "https://abcnews-streams.akamaized.net/hls/live/2023567/abcnews8/master.m3u8",
+     "behaviorHints": {
+      "notWebReady": true
+     },
+     "name": "Audio",
+     "description": "HV:ABCNEWS-STRE"
+    }
+   ]
+  },
+  "/usatv/stream/tv/ustv-a931a508-de1f-4c1e-81eb-f1abffd5e147.json": {
+   "streams": []
+  },
+  "/penguplay/catalog/tv/pp-live-channels.json": {
+   "metas": [
+    {
+     "id": "pp-live:sktech~m7af35fb1d98b2f5ea8564f4d36a574f9a836fbca",
+     "type": "tv",
+     "name": "\ud83d\udcfa _Kurt_TV_",
+     "poster": "https://pengu.uk/live-sports/poster.jpg?v=19&c=64748b&t=_Kurt_TV_&t1=_Kurt_TV_&l=RUSSIA+TV&s=channel&sp=other&art=aHR0cDovL2tpbm93YWxrLmhvcHRvLm9yZy9zdGF0aWMtY29udGVudC9sb2dvLzM5NT91bmlxdWU9MjAyNi0wOS0yMCswNiUzQTM0JTNBNDEuMjE3Mjk3JmFjY2Vzc190b2tlbj0wNjlhM2IxMi0wNTRkLTQ4NGItOWI0Yy1kMTNjOTZhZDA5N2U",
+     "posterShape": "landscape",
+     "background": "https://pengu.uk/live-sports/poster.jpg?v=19&c=64748b&t=_Kurt_TV_&t1=_Kurt_TV_&l=RUSSIA+TV&s=channel&sp=other&art=aHR0cDovL2tpbm93YWxrLmhvcHRvLm9yZy9zdGF0aWMtY29udGVudC9sb2dvLzM5NT91bmlxdWU9MjAyNi0wOS0yMCswNiUzQTM0JTNBNDEuMjE3Mjk3JmFjY2Vzc190b2tlbj0wNjlhM2IxMi0wNTRkLTQ4NGItOWI0Yy1kMTNjOTZhZDA5N2U",
+     "logo": "http://kinowalk.hopto.org/static-content/logo/395?unique=2026-09-20+06%3A34%3A41.217297&access_token=069a3b12-054d-484b-9b4c-d13c96ad097e",
+     "releaseInfo": "24/7",
+     "behaviorHints": {
+      "defaultVideoId": "pp-live:sktech~m7af35fb1d98b2f5ea8564f4d36a574f9a836fbca",
+      "isLive": true
+     },
+     "genres": [
+      "\ud83d\udcfa RUSSIA TV"
+     ],
+     "description": "RUSSIA TV\n\ud83d\udcfa Broadcasting 24/7\n\ud83d\udef0\ufe0f Sources: SK Tech"
+    },
+    {
+     "id": "pp-live:sktech~ma3faa42a910cf9c4ae98a75e5825967824c938fc",
+     "type": "tv",
+     "name": "\ud83d\udcfa ---Live(GO 3 sport 1)---",
+     "poster": "https://pengu.uk/live-sports/poster.jpg?v=19&c=64748b&t=---Live%28GO+3+sport+1%29---&t1=---Live%28GO+3+sport+1%29---&l=BANGLADESH+TV&s=channel&sp=other&art=aHR0cHM6Ly91cGxvYWQud2lraW1lZGlhLm9yZy93aWtpcGVkaWEvY29tbW9ucy82LzY0L0REX1Nwb3J0c19uZXdfbG9nby5qcGc",
+     "posterShape": "landscape",
+     "background": "https://pengu.uk/live-sports/poster.jpg?v=19&c=64748b&t=---Live%28GO+3+sport+1%29---&t1=---Live%28GO+3+sport+1%29---&l=BANGLADESH+TV&s=channel&sp=other&art=aHR0cHM6Ly91cGxvYWQud2lraW1lZGlhLm9yZy93aWtpcGVkaWEvY29tbW9ucy82LzY0L0REX1Nwb3J0c19uZXdfbG9nby5qcGc",
+     "logo": "https://upload.wikimedia.org/wikipedia/commons/6/64/DD_Sports_new_logo.jpg",
+     "releaseInfo": "24/7",
+     "behaviorHints": {
+      "defaultVideoId": "pp-live:sktech~ma3faa42a910cf9c4ae98a75e5825967824c938fc",
+      "isLive": true
+     },
+     "genres": [
+      "\ud83d\udcfa BANGLADESH TV"
+     ],
+     "description": "BANGLADESH TV\n\ud83d\udcfa Broadcasting 24/7\n\ud83d\udef0\ufe0f Sources: SK Tech, AK47 Sports"
+    }
+   ]
   }
  }
 }

@@ -2,7 +2,7 @@
 """rex-stremio's own logic, its settings page, and one sync against a real rex.
 
 The fixtures are captured: `stremio.json` is Stremio addons' real answers (DMM Cast for the RD
-test account, Cinemeta, httpx, Torrentio over RD, Public Domain Movies; secrets redacted) and
+test account, Cinemeta, httpx, Torrentio over RD, Public Domain Movies, live TV's USA TV Next and PenguPlay; secrets redacted) and
 `manifests.json` their manifests, all served by a fake addon host; the probes of their streams
 were captured through a relay. `fake_ffprobe.py` answers from them. The end-to-end case needs a
 rex binary: REX_BIN.
@@ -36,6 +36,8 @@ with open(os.path.join(FIXTURES, "manifests.json")) as _handle:
     MANIFESTS = json.load(_handle)["routes"]
 DMM = STREMIO["/dmm/stream/movie/tt30144839.json"]["streams"]
 TORRENTIO = STREMIO["/torrentio/stream/series/tt11540908:1:2.json"]["streams"]
+ABC = "ustv-1a0b178a-23c5-4c06-9217-ceabe2897343"
+USATV = STREMIO["/usatv/stream/tv/%s.json" % ABC]["streams"]
 
 
 def read_json(path):
@@ -141,6 +143,8 @@ class Logic(unittest.TestCase):
         dmm = rex_stremio.catalogs_of(MANIFESTS["/dmm/manifest.json"])
         self.assertEqual([(c["type"], c["id"]) for c in dmm], [("movie", "casted-movies"), ("series", "casted-shows")])
         self.assertEqual(rex_stremio.catalogs_of(MANIFESTS["/torrentio/manifest.json"]), [])
+        # A live TV addon's channels (its genre is optional).
+        self.assertEqual(rex_stremio.catalogs_of(MANIFESTS["/usatv/manifest.json"]), [{"type": "tv", "id": "all", "name": "USA TV Next"}])
         self.assertEqual(rex_stremio.catalogs_of({"catalogs": 4}), [])
         self.assertEqual(rex_stremio.catalogs_of({"catalogs": [{"type": "movie", "id": 7, "extra": 3}, 4]}), [])
 
@@ -151,6 +155,9 @@ class Logic(unittest.TestCase):
         pdm = STREMIO["/pdm/stream/movie/tt0012349.json"]["streams"][0]
         self.assertEqual(rex_stremio.quality(pdm), (1080, int(859.37 * (1 << 20))))
         self.assertEqual(rex_stremio.quality({"name": "9" * 400 + " GB", "behaviorHints": {}}), (0, None))
+        # Live channels name their streams HD and SD; HD ranks above SD.
+        self.assertEqual([rex_stremio.quality(stream)[0] for stream in USATV], [720, 480, 0])
+        self.assertEqual(rex_stremio.ranked(USATV, {})[0], USATV[0])
 
     def test_ranked(self):
         # A link out to DMM's site is no file; the labelled 4K streams beat the unlabelled one.
@@ -310,6 +317,39 @@ class Logic(unittest.TestCase):
         self.assertFalse(own(FakeRequest("127.0.0.1", "127.0.0.1:not-a-port")))
         self.assertFalse(own(FakeRequest("127.0.0.1", "127.0.0.1:9982", "POST", "https://evil.example")))
         self.assertTrue(own(FakeRequest("127.0.0.1", "127.0.0.1:9982", "POST", "http://127.0.0.1:9982")))
+
+    def test_live_channel_item(self):
+        config = rex_stremio.load_config(config_file(self, {"catalogs": [{"url": "https://h/catalog/tv/all.json", "title": "USA TV"}]}))
+        channels = config["catalogs"][0]
+        self.assertEqual((channels["type"], channels["library"], channels["directory"]), ("tv", "Live TV", "live-tv"))
+        meta = STREMIO["/usatv/catalog/tv/all.json"]["metas"][0]
+        probe = read_json(os.path.join(FIXTURES, "probe-usa-tv-%s.json" % ABC))
+        pushed = rex_stremio.stremio_item(config, channels, "usa-tv-" + ABC, ABC, meta, None, probe, "m3u8")
+        # Nothing names a channel but the addon: no kind, no ids, its name and logo as display.
+        self.assertNotIn("kind", pushed)
+        self.assertNotIn("ids", pushed)
+        self.assertNotIn("size", pushed)
+        self.assertEqual(pushed["path"], "live-tv/usa-tv/usa-tv-%s.m3u8" % ABC)
+        self.assertEqual(pushed["display"], {"title": "ABC", "thumb": meta["poster"]})
+
+    def test_channels_keep_the_addons_own_ids(self):
+        self.assertEqual(len(rex_stremio.catalogs_of(MANIFESTS["/penguplay/manifest.json"])), 16)
+        host, base = addon_host()
+        self.addCleanup(stop_server, host)
+        work = tempfile.mkdtemp(prefix="rex-stremio-")
+        config = rex_stremio.load_config(config_file(self, {"cache": work, "addons": [addon(base, "penguplay")], "catalogs": [
+            {"url": base + "/penguplay/catalog/tv/pp-live-channels.json", "title": "Channels"}]}))
+        sync = rex_stremio.Sync(config)
+        probe = read_json(os.path.join(FIXTURES, "probe-usa-tv-%s.json" % ABC))
+        with unittest.mock.patch.object(rex_stremio.Sync, "probe", lambda *args: probe):
+            items = sync.catalog_items(config["catalogs"][0])
+        # PenguPlay's ids hold ':' and '~': the path takes them as '-', the stream is asked by the id.
+        metas = STREMIO["/penguplay/catalog/tv/pp-live-channels.json"]["metas"]
+        vid = "channels-pp-live-sktech-" + metas[0]["id"].split("~")[1]
+        self.assertEqual([item["path"] for item in items][0], "live-tv/channels/%s.m3u8" % vid)
+        self.assertEqual(read_json(sync.path("info", vid))["sid"], metas[0]["id"])
+        self.assertEqual(sync.route_vid("/live-tv/channels/%s.m3u8" % vid), vid)
+        self.assertEqual([item["display"]["title"] for item in items], [meta["name"] for meta in metas])
 
     def test_stremio_item(self):
         config = rex_stremio.load_config(config_file(self, {"catalogs": [
@@ -834,12 +874,14 @@ class AgainstRex(unittest.TestCase):
         with open(path, "w") as handle:
             json.dump({"rex_url": "http://127.0.0.1:%d" % self.port, "listen": "127.0.0.1:%d" % relay, "cache": os.path.join(self.work, "cache"),
                        "ffprobe": os.path.join(HERE, "fake_ffprobe.py"),
-                       "addons": [addon(base, "dmm"), addon(base, "cinemeta"), addon(base, "httpx"), addon(base, "torrentio")],
+                       "addons": [addon(base, "dmm"), addon(base, "cinemeta"), addon(base, "httpx"), addon(base, "torrentio"),
+                                  addon(base, "usatv")],
                        "catalogs": [
                            {"url": base + "/dmm/catalog/movie/casted-movies.json", "title": "DMM Cast"},
                            {"url": base + "/cinemeta/catalog/movie/top.json", "title": "Top films", "limit": 2},
                            {"url": base + "/cinemeta/catalog/series/top.json", "title": "Top shows", "limit": 3},
-                           {"url": base + "/pdm/catalog/movie/publicdomainmovies.json", "title": "Public domain", "limit": 3}]},
+                           {"url": base + "/pdm/catalog/movie/publicdomainmovies.json", "title": "Public domain", "limit": 3},
+                           {"url": base + "/usatv/catalog/tv/all.json", "title": "USA TV"}]},
                       handle)
         self.config = rex_stremio.load_config(path)
         self.sync = rex_stremio.Sync(self.config)
@@ -873,6 +915,11 @@ class AgainstRex(unittest.TestCase):
         self.assertEqual([show["title"] for show in shows], [STREMIO["/cinemeta/catalog/series/top.json"]["metas"][0]["name"]])
         episodes = self.get("/library/metadata/%s/allLeaves" % shows[0]["ratingKey"])["MediaContainer"]["Metadata"]
         self.assertEqual([(e["parentIndex"], e["index"]) for e in episodes], [(1, 1), (1, 2), (1, 3)])
+        # The live TV addon's channels: a library of their own, named by the addon. CW has no
+        # stream, so it is left out (and the sync is partial, keeping rows it cannot see).
+        channels = self.get("/library/sections/%s/all" % sections["Live TV"]["key"])["MediaContainer"]["Metadata"]
+        self.assertEqual([(channel["title"], channel["duration"]) for channel in channels], [("ABC", 0)])
+        self.assertEqual(sections["Live TV"]["type"], "movie")
         # At play the relay asks every stream addon again and redirects to the pinned stream.
         opener = urllib.request.build_opener(NoRedirect)
         with self.assertRaises(urllib.error.HTTPError) as answer:
@@ -883,6 +930,10 @@ class AgainstRex(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as answer:
             opener.open("http://127.0.0.1:%d/stremio-films/dmm-cast/dmm-cast-tt30144839.ts" % self.relay, timeout=30)
         self.assertEqual(answer.exception.headers["Location"], DMM[2]["url"])
+        # A channel plays its HD stream.
+        with self.assertRaises(urllib.error.HTTPError) as answer:
+            opener.open("http://127.0.0.1:%d/live-tv/usa-tv/usa-tv-%s.m3u8" % (self.relay, ABC), timeout=30)
+        self.assertEqual(answer.exception.headers["Location"], USATV[0]["url"])
 
     def test_empty_catalog_keeps_existing_rows_and_upserts_healthy_addition(self):
         self.sync.once()
