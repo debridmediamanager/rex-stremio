@@ -980,6 +980,20 @@ class Relay(unittest.TestCase):
             self.get("/_relay/films-tt0111161/%s.ts" % ("0" * 20))
         self.assertEqual(unknown.exception.code, 404)
 
+    def test_a_stream_rex_cannot_take_gives_way_to_the_next(self):
+        self.pin("/eclipsia/stream/movie/tt0111161.json", 0)
+        probes = iter([{"format": {"format_name": "eac3"}, "streams": []},
+                       {"format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2"}, "streams": []}])
+        metas = {"metas": [{"id": "tt0111161", "type": "movie", "name": "The Shawshank Redemption"}]}
+        with unittest.mock.patch.object(rex_stremio.Sync, "probe", lambda *args: next(probes)), \
+                unittest.mock.patch.object(rex_stremio, "get_json", lambda url, timeout=60: metas):
+            items = self.sync.catalog_items(self.config["catalogs"][0])
+        self.assertEqual([item["path"] for item in items], ["stremio-films/films/films-tt0111161.mp4"])
+        info = read_json(self.info)
+        self.assertEqual([entry["key"] for entry in info["refused"]], [self.base + "/hdr/eclipsia-0.mp4"])
+        # The next resolve skips what was set aside.
+        self.assertEqual(self.sync.resolve("films-tt0111161"), self.base + "/hdr/eclipsia-1.m3u8")
+
 
 @unittest.skipUnless(os.path.exists(os.environ.get("REX_BIN", "/nonexistent")), "REX_BIN names no rex binary")
 class AgainstRex(unittest.TestCase):

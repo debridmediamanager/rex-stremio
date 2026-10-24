@@ -661,6 +661,27 @@ class Sync:
                 self.cache[vid] = value
                 self.via[vid] = headers or {}
 
+    def refuse(self, vid, config, version):
+        """Set aside for a day the stream an item is pinned to, and what was learned from it.
+        False when nothing is pinned (no stream opened at all)."""
+        path = self.path("info", vid, config, version)
+        try:
+            with open(path) as handle:
+                info = json.load(handle)
+        except (OSError, ValueError):
+            return False
+        if not isinstance(info, dict) or not info.get("stream"):
+            return False
+        now = time.time()
+        refused = [entry for entry in info.get("refused") or [] if isinstance(entry, dict) and now - entry.get("at", 0) < 86400]
+        refused = (refused + [{"key": info["stream"], "at": now}])[-20:]
+        LOG.warning("%s: %s set aside, trying the next stream", vid, safe_stream_key(info["stream"]))
+        self.cache_update(path, {"stream": None, "refused": refused}, version)
+        self.cache_remove(self.path("probes", vid, config, version), version)
+        with self.guard:
+            self.cache.pop(vid, None)
+        return True
+
     def remember(self, vid, url):
         """A link an item's playlist names, as the relay path it is fetched through."""
         token = hashlib.sha256(url.encode()).hexdigest()[:20]
@@ -755,7 +776,11 @@ class Sync:
                     self.cache.pop(vid, None)
             with open(self.path("info", vid, config, version)) as handle:
                 info = json.load(handle)
+            refused = {entry.get("key") for entry in info.get("refused") or []
+                       if isinstance(entry, dict) and time.time() - entry.get("at", 0) < 86400}
             for stream in ranked(self.streams(info["kind"], info["sid"], config), config, info.get("stream")):
+                if stream_key(stream) in refused:
+                    continue
                 url = opens(stream["url"], request_headers(stream))
                 if not url:
                     continue
@@ -916,32 +941,40 @@ class Sync:
             # and ask ffprobe once more; a real probe failure is still recorded as a partial
             # catalog without repeatedly hammering the source.
             probe_path = self.path("probes", vid, config, version)
-            probe = None
-            for attempt in range(2):
-                had_cache = os.path.isfile(probe_path)
-                try:
-                    probe = self.cached("probes", vid, lambda: self.probe(vid, catalog, config), config, version)
-                except Exception as error:  # no stream that opens, or one ffprobe could not read
+            extension = None
+            # A stream ffprobe cannot read or rex cannot take gives way to the next one: an
+            # addon's best-labelled link was a .zip of another show (Eclipsia, 2026-10-24), and
+            # pinned, it kept the title out of rex on every sync.
+            for _ in range(3):
+                probe = None
+                for attempt in range(2):
+                    had_cache = os.path.isfile(probe_path)
+                    try:
+                        probe = self.cached("probes", vid, lambda: self.probe(vid, catalog, config), config, version)
+                    except Exception as error:  # no stream that opens, or one ffprobe could not read
+                        complete = False
+                        if attempt == 0 and had_cache:
+                            self.cache_remove(probe_path, version)
+                            continue
+                        LOG.warning("%s: %s", vid, safe_error(error))
+                        break
+                    if isinstance(probe, dict) and isinstance(probe.get("format"), dict):
+                        break
                     complete = False
-                    if attempt == 0 and had_cache:
+                    if attempt == 0:
                         self.cache_remove(probe_path, version)
                         continue
-                    LOG.warning("%s: %s", vid, safe_error(error))
-                    break
+                    LOG.warning("%s: ffprobe returned no format", vid)
+                    probe = None
                 if isinstance(probe, dict) and isinstance(probe.get("format"), dict):
+                    extension = CONTAINERS.get(probe["format"].get("format_name"))
+                    if extension:
+                        break
+                    complete = False
+                    LOG.warning("%s: a %s stream rex cannot take", vid, probe["format"].get("format_name"))
+                if not self.refuse(vid, config, version):
                     break
-                complete = False
-                if attempt == 0:
-                    self.cache_remove(probe_path, version)
-                    continue
-                LOG.warning("%s: ffprobe returned no format", vid)
-                probe = None
-            if not isinstance(probe, dict) or not isinstance(probe.get("format"), dict):
-                continue
-            extension = CONTAINERS.get(probe["format"].get("format_name"))
             if not extension:
-                complete = False
-                LOG.warning("%s: a %s stream rex cannot take", vid, (probe.get("format") or {}).get("format_name"))
                 continue
             if info.get("extension") != extension:
                 if not self.cache_update(info_path, {"extension": extension}, version):
