@@ -1,5 +1,5 @@
 {
- "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams. USA TV Next's (a live TV addon, 2026-10-24) catalog for two channels, ABC (first 3 streams) and CW (no stream). PenguPlay's Live TV channels catalog (two channels), 2026-10-24.",
+ "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams. USA TV Next's (a live TV addon, 2026-10-24) catalog for two channels, ABC (first 3 streams) and CW (no stream). PenguPlay's Live TV channels catalog (two channels), 2026-10-24. Comet's answer for an unconfigured install (2026-10-24): one 'stream' linking its web page (comet.feels.legal, text/html), served here from /page/.",
  "routes": {
   "/dmm/catalog/movie/casted-movies.json": {
    "metas": [
@@ -1026,6 +1026,15 @@
       "\ud83d\udcfa BANGLADESH TV"
      ],
      "description": "BANGLADESH TV\n\ud83d\udcfa Broadcasting 24/7\n\ud83d\udef0\ufe0f Sources: SK Tech, AK47 Sports"
+    }
+   ]
+  },
+  "/comet/stream/movie/tt0111161.json": {
+   "streams": [
+    {
+     "name": "[\u274c] Comet",
+     "description": "\u26a0\ufe0f OBSOLETE CONFIGURATION, PLEASE RE-CONFIGURE ON https://cometfortheweebs.midnightignite.me \u26a0\ufe0f",
+     "url": "{STREAMS}/page/comet-feels-legal"
     }
    ]
   }

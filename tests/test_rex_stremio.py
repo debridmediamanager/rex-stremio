@@ -68,6 +68,14 @@ def addon_host():
 
         def do_GET(self):
             path = urllib.parse.unquote(self.path)
+            if path.startswith(("/page/", "/video/")):  # a web page, and a video file
+                raw = b"<!doctype html><title>Comet</title>" if path.startswith("/page/") else b"\x1a\x45\xdf\xa3"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8" if path.startswith("/page/") else "video/x-matroska")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+                return
             body = STREMIO.get(path) or MANIFESTS.get(path)
             if body is None:
                 self.send_error(404)
@@ -364,6 +372,15 @@ class Logic(unittest.TestCase):
             rex_stremio.Sync(config).probe("usa-tv-" + ABC, config["catalogs"][0])
             with open(seen) as handle:
                 self.assertEqual("-extension_picky 0" in handle.read(), lenient)
+
+    def test_a_web_page_is_no_stream(self):
+        host, base = addon_host()
+        self.addCleanup(stop_server, host)
+        comet = json.loads(json.dumps(STREMIO["/comet/stream/movie/tt0111161.json"]).replace("{STREAMS}", base))["streams"]
+        # Ranked as a link, it opens with 200, but what it opens is Comet's web page.
+        self.assertEqual(rex_stremio.ranked(comet, {}), comet)
+        self.assertIsNone(rex_stremio.opens(comet[0]["url"]))
+        self.assertEqual(rex_stremio.opens(base + "/video/a.mkv"), base + "/video/a.mkv")
 
     def test_stremio_item(self):
         config = rex_stremio.load_config(config_file(self, {"catalogs": [

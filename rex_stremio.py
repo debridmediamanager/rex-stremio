@@ -297,10 +297,15 @@ def ranked(streams, config, pinned=None):
 
 
 def opens(url):
-    """The link a stream ends at, when it opens; None when it does not (an expired or refused link)."""
+    """The link a stream ends at, when it opens; None when it does not (an expired or refused link,
+    or a web page: addons list their configure page, a donation or status page as a "stream", and
+    Comet's unconfigured answer was nothing else, 2026-10-24)."""
     request = urllib.request.Request(url, headers={"User-Agent": "rex-stremio", "Range": "bytes=0-0"})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
+            if response.headers.get_content_type() == "text/html":
+                LOG.info("%s: a web page, not a video", safe_url(url))
+                return None
             return response.geturl() if response.status in (200, 206) else None
     except Exception as error:
         LOG.info("%s: %s", safe_url(url), safe_error(error))
