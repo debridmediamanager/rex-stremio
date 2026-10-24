@@ -18,15 +18,18 @@ One process does three things:
 Standard library only; ffprobe is a separate executable.
 """
 import argparse
+import copy
 import html
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -34,6 +37,9 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOG = logging.getLogger("rex-stremio")
+MAX_FORM_BYTES = 1 << 20
+MAX_FORM_FIELDS = 2000
+MAX_JSON_BYTES = 16 << 20
 
 DEFAULTS = {
     "rex_url": "http://127.0.0.1:32400",
@@ -66,27 +72,122 @@ def slug(text):
 def get_json(url, timeout=60):
     request = urllib.request.Request(url, headers={"User-Agent": "rex-stremio", "Accept": "application/json"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read() or b"{}")
+        return response_json(response)
+
+
+def response_json(response):
+    chunks, total = [], 0
+    while True:
+        chunk = response.read(min(1 << 16, MAX_JSON_BYTES + 1 - total))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > MAX_JSON_BYTES:
+            raise ValueError("JSON response is too large")
+    body = b"".join(chunks)
+    return json.loads(body or b"{}")
+
+
+def write_json(path, value, indent=None):
+    """Replace a JSON file atomically without exposing addon credentials."""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    descriptor, temporary = tempfile.mkstemp(prefix=".%s-" % os.path.basename(path), dir=directory)
+    try:
+        os.fchmod(descriptor, 0o600)
+        handle = os.fdopen(descriptor, "w")
+        # fdopen now owns the descriptor. Do not close its old integer again if a later
+        # dump/replace fails: that number may already have been reused by another thread.
+        descriptor = None
+        with handle:
+            json.dump(value, handle, indent=indent)
+        os.replace(temporary, path)
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+
+
+def safe_url(url):
+    """A URL's scheme and host, without credentials, path or query secrets."""
+    try:
+        parts = urllib.parse.urlsplit(str(url))
+        host = parts.hostname
+        if not parts.scheme or not host:
+            return "<url>"
+        host = "[%s]" % host if ":" in host else host
+        if parts.port:
+            host += ":%d" % parts.port
+        return "%s://%s" % (parts.scheme, host)
+    except (TypeError, ValueError):
+        return "<url>"
+
+
+def safe_error(error):
+    """Remove credential-bearing URLs before an error reaches logs or status."""
+    text = str(error)
+    return re.sub(r"https?://[^\s'\"<>]+", lambda match: safe_url(match.group()), text)[:300]
+
+
+def safe_stream_key(value):
+    return safe_url(value) if isinstance(value, str) and value.startswith(("http://", "https://")) else value
+
+
+def rex_endpoint(base, path):
+    """Append a feed route without discarding a configured rex path or query."""
+    parts = urllib.parse.urlsplit(base)
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/") + path,
+                                    parts.query, ""))
 
 
 def addon_base(url):
     """A manifest's url as Stremio shows it (`stremio://`, `.../manifest.json`) -> the addon's base."""
+    if not isinstance(url, str):
+        return ""
     url = url.strip()
     if url.startswith("stremio://"):
         url = "https://" + url[len("stremio://"):]
     return url.removesuffix("/manifest.json").rstrip("/")
 
 
+def addon_manifest(addon):
+    value = addon.get("manifest") if isinstance(addon, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
 def serves(manifest, resource, kind, sid):
     """Whether an addon answers `resource` for `kind` and this id, by its manifest."""
-    for entry in manifest.get("resources") or []:
+    if not isinstance(manifest, dict) or not isinstance(sid, str):
+        return False
+    resources = manifest.get("resources")
+    if not isinstance(resources, list):
+        return False
+    for entry in resources:
         if isinstance(entry, str):
             entry = {"name": entry}
+        if not isinstance(entry, dict):
+            continue
         if entry.get("name") != resource:
             continue
         types = entry.get("types") or manifest.get("types") or []
         prefixes = entry.get("idPrefixes") or manifest.get("idPrefixes")
-        if kind in types and (not prefixes or any(sid.startswith(prefix) for prefix in prefixes)):
+        if isinstance(types, str):
+            types = [types]
+        elif not isinstance(types, list):
+            types = []
+        types = [value for value in types if isinstance(value, str)]
+        if isinstance(prefixes, str):
+            prefixes = [prefixes]
+        elif not isinstance(prefixes, list):
+            prefixes = []
+        prefixes = [value for value in prefixes if isinstance(value, str)]
+        if isinstance(kind, str) and kind in types and (not prefixes or any(sid.startswith(prefix) for prefix in prefixes)):
             return True
     return False
 
@@ -94,30 +195,67 @@ def serves(manifest, resource, kind, sid):
 def catalogs_of(manifest):
     """The catalogs of films and series an addon lists without being asked something first (a
     search catalog needs a query)."""
+    if not isinstance(manifest, dict):
+        return []
+    raw_catalogs = manifest.get("catalogs")
+    if not isinstance(raw_catalogs, list):
+        return []
     out = []
-    for catalog in manifest.get("catalogs") or []:
-        required = [extra for extra in catalog.get("extra") or [] if extra.get("isRequired")]
-        required += [name for name in catalog.get("extraRequired") or []]
-        if catalog.get("type") in ("movie", "series") and catalog.get("id") and not required:
+    for catalog in raw_catalogs:
+        if not isinstance(catalog, dict):
+            continue
+        raw_extra = catalog.get("extra")
+        if raw_extra is not None and not isinstance(raw_extra, list):
+            continue
+        extra = raw_extra if isinstance(raw_extra, list) else []
+        required = [entry for entry in extra
+                    if isinstance(entry, dict) and entry.get("isRequired")]
+        extra_required = catalog.get("extraRequired")
+        if extra_required is not None and not isinstance(extra_required, list):
+            continue
+        if isinstance(extra_required, list):
+            required += [name for name in extra_required if isinstance(name, str)]
+        if (catalog.get("type") in ("movie", "series") and isinstance(catalog.get("id"), str)
+                and catalog["id"] and not required):
             out.append({"type": catalog["type"], "id": catalog["id"], "name": catalog.get("name") or catalog["id"]})
     return out
 
 
 def quality(stream):
     """(resolution, size in bytes) as the stream's labels give them; 0 or None where they do not."""
+    if not isinstance(stream, dict):
+        return 0, None
     hints = stream.get("behaviorHints") or {}
+    if not isinstance(hints, dict):
+        hints = {}
     text = " ".join(str(stream.get(key) or "") for key in ("name", "title", "description")) + " " + str(hints.get("filename") or "")
     resolution = next((value for pattern, value in RESOLUTIONS if re.search(pattern, text, re.I)), 0)
     size = hints.get("videoSize")
+    try:
+        size = float(size) if size else None
+    except (TypeError, ValueError, OverflowError):
+        size = None
+    if size is not None and (not math.isfinite(size) or size <= 0):
+        size = None
     if not size:
         found = re.search(r"(\d+(?:\.\d+)?)\s*(GB|MB)\b", text, re.I)
-        size = found and float(found[1]) * (1 << (30 if found[2].upper() == "GB" else 20))
+        if found:
+            try:
+                size = float(found[1]) * (1 << (30 if found[2].upper() == "GB" else 20))
+            except (TypeError, ValueError, OverflowError):
+                size = None
+    if size is not None and (not math.isfinite(size) or size <= 0):
+        size = None
     return resolution, int(size) if size else None
 
 
 def stream_key(stream):
     """What names one stream across asks: its file, else its group, else its link."""
+    if not isinstance(stream, dict):
+        return None
     hints = stream.get("behaviorHints") or {}
+    if not isinstance(hints, dict):
+        hints = {}
     return hints.get("filename") or hints.get("bingeGroup") or stream.get("url")
 
 
@@ -126,14 +264,26 @@ def ranked(streams, config, pinned=None):
     `ytId` and an `externalUrl` are not files), within the configured limits, highest
     resolution first, the addons' own order breaking ties. The stream an item was probed from
     (`pinned`) goes first, so what plays is what rex was told about."""
-    cap = config.get("max_resolution")
-    biggest = config.get("max_size_gb") and float(config["max_size_gb"]) * (1 << 30)
+    try:
+        cap = int(config["max_resolution"]) if config.get("max_resolution") is not None else None
+    except (TypeError, ValueError):
+        cap = None
+    try:
+        biggest = config.get("max_size_gb") and float(config["max_size_gb"]) * (1 << 30)
+    except (TypeError, ValueError, OverflowError):
+        biggest = None
+    if biggest is not None and not math.isfinite(biggest):
+        biggest = None
+    if not isinstance(streams, list):
+        return []
     kept = []
     for at, stream in enumerate(streams):
-        if not str(stream.get("url", "")).startswith(("http://", "https://")):
+        if not isinstance(stream, dict):
+            continue
+        if not isinstance(stream.get("url"), str) or not stream["url"].startswith(("http://", "https://")):
             continue
         resolution, size = quality(stream)
-        if (cap and resolution > int(cap)) or (biggest and size and size > biggest):
+        if (cap and resolution > cap) or (biggest and size and size > biggest):
             continue
         kept.append((stream_key(stream) != pinned if pinned else False, -resolution, at, stream))
     return [stream for *_, stream in sorted(kept, key=lambda row: row[:3])]
@@ -146,44 +296,159 @@ def opens(url):
         with urllib.request.urlopen(request, timeout=30) as response:
             return response.geturl() if response.status in (200, 206) else None
     except Exception as error:
-        LOG.info("%s: %s", url.split("?")[0][:80], error)
+        LOG.info("%s: %s", safe_url(url), safe_error(error))
         return None
 
 
 def load_config(path):
     with open(path) as handle:
-        config = dict(DEFAULTS, **json.load(handle))
+        raw = json.load(handle)
+    if not isinstance(raw, dict):
+        raise ValueError("config must be an object")
+    config = dict(DEFAULTS, **raw)
+    if not isinstance(config.get("catalogs"), list) or not isinstance(config.get("addons"), list):
+        raise ValueError("addons and catalogs must be lists")
+    if not isinstance(config.get("source"), str) or not re.fullmatch(r"[A-Za-z0-9_-]+", config["source"]):
+        raise ValueError("source must be a simple name")
+    for key in ("rex_url", "relay_url"):
+        value = config.get(key)
+        if value is None:
+            if key == "rex_url":
+                raise ValueError("rex_url must be an http(s) URL")
+            continue
+        if not isinstance(value, str):
+            raise ValueError("%s must be an http(s) URL" % key)
+        try:
+            parts = urllib.parse.urlsplit(value)
+            parts.port
+            hostname = parts.hostname
+        except (TypeError, ValueError):
+            raise ValueError("%s must be an http(s) URL" % key)
+        if parts.scheme not in ("http", "https") or not hostname:
+            raise ValueError("%s must be an http(s) URL" % key)
+    if not isinstance(config.get("cache"), str) or not config["cache"]:
+        raise ValueError("cache must be a path")
+    for key in ("listen", "mount", "ffprobe"):
+        if not isinstance(config.get(key), str) or not config[key]:
+            raise ValueError("%s must be a string" % key)
+    if not re.fullmatch(r"(?:\[[^\]]+\]|[^:]+):\d{1,5}", config["listen"]):
+        raise ValueError("listen must be host:port")
+    if int(config["listen"].rsplit(":", 1)[1]) > 65535:
+        raise ValueError("listen port is out of range")
+    try:
+        interval = int(config.get("interval_minutes"))
+    except (TypeError, ValueError):
+        raise ValueError("interval_minutes must be positive")
+    if interval <= 0:
+        raise ValueError("interval_minutes must be positive")
+    config["interval_minutes"] = interval
+    if config.get("max_resolution") is not None:
+        try:
+            config["max_resolution"] = int(config["max_resolution"])
+        except (TypeError, ValueError):
+            raise ValueError("max_resolution must be a number")
+        if config["max_resolution"] <= 0:
+            raise ValueError("max_resolution must be positive")
+    if config.get("max_size_gb") is not None:
+        try:
+            config["max_size_gb"] = float(config["max_size_gb"])
+        except (TypeError, ValueError):
+            raise ValueError("max_size_gb must be a number")
+        if not math.isfinite(config["max_size_gb"]) or config["max_size_gb"] <= 0:
+            raise ValueError("max_size_gb must be positive")
     if config["cache"] and not os.path.isabs(config["cache"]):
         config["cache"] = os.path.join(os.path.dirname(os.path.abspath(path)), config["cache"])
     if not config["relay_url"]:
         config["relay_url"] = "http://" + config["listen"]
     catalogs = []
-    for catalog in config["catalogs"]:
-        found = re.fullmatch(r"(https?://.+?)/catalog/(movie|series)/([^/]+?)\.json", catalog.get("url", ""))
+    explicit_slugs = set()
+    records = []
+    for raw_catalog in config["catalogs"]:
+        if not isinstance(raw_catalog, dict):
+            raise ValueError("catalog must be an object")
+        catalog = dict(raw_catalog)
+        url = catalog.get("url", "")
+        if not isinstance(url, str):
+            raise ValueError("catalog URL must be a string")
+        found = re.fullmatch(r"(https?://.+?)/catalog/(movie|series)/([^/]+?)\.json", url)
         if not found:
-            raise ValueError("catalog %s: not a Stremio catalog url (<addon>/catalog/<movie|series>/<id>.json)" % catalog.get("url"))
+            raise ValueError("not a Stremio catalog URL (<addon>/catalog/<movie|series>/<id>.json)")
         catalog = dict({"library": "Stremio Films" if found[2] == "movie" else "Stremio Shows", "limit": 50}, **catalog)
-        catalog.setdefault("slug", slug(catalog.get("title") or found[3]))
-        while any(other["slug"] == catalog["slug"] for other in catalogs):  # item ids start with it
-            catalog["slug"] += "-2"
-        catalog.setdefault("directory", slug(catalog["library"]))
+        if not isinstance(catalog.get("library"), str) or not catalog["library"].strip():
+            raise ValueError("catalog library must be a name")
+        try:
+            catalog["limit"] = int(catalog["limit"])
+        except (TypeError, ValueError):
+            raise ValueError("catalog limit must be positive")
+        if catalog["limit"] <= 0:
+            raise ValueError("catalog limit must be positive")
+        has_slug = "slug" in raw_catalog and raw_catalog.get("slug") not in (None, "")
+        if has_slug:
+            if not isinstance(catalog.get("slug"), str) or not re.fullmatch(r"[A-Za-z0-9_-]+", catalog["slug"]):
+                raise ValueError("catalog slug must be a simple name")
+            if catalog["slug"] in explicit_slugs:
+                raise ValueError("catalog slugs must be unique")
+            explicit_slugs.add(catalog["slug"])
+        else:
+            catalog.pop("slug", None)
+        has_directory = "directory" in raw_catalog and raw_catalog.get("directory") not in (None, "")
+        if has_directory and (not isinstance(catalog.get("directory"), str)
+                              or not re.fullmatch(r"[A-Za-z0-9_-]+", catalog["directory"])):
+            raise ValueError("catalog directory must be a simple name")
+        if not has_directory:
+            catalog.pop("directory", None)
         catalog["type"] = found[2]
+        records.append((catalog, found[3], has_slug, has_directory))
+    allocated_slugs = set(explicit_slugs)
+    for catalog, catalog_id, has_slug, has_directory in records:
+        if not has_slug:
+            base = slug(str(catalog.get("title") or catalog_id))
+            candidate = base
+            while candidate in allocated_slugs:
+                # Keep the historical sequence (base, base-2, base-2-2, ...). Existing
+                # configs without persisted identity must not move their feed ids on upgrade.
+                candidate += "-2"
+            catalog["slug"] = candidate
+        allocated_slugs.add(catalog["slug"])
+        if not has_directory:
+            catalog["directory"] = slug(catalog["library"])
+        if not isinstance(catalog["directory"], str) or not re.fullmatch(r"[A-Za-z0-9_-]+", catalog["directory"]):
+            raise ValueError("catalog directory must be a simple name")
         catalogs.append(catalog)
+    libraries = {}
+    for catalog in catalogs:
+        key = (catalog["directory"], catalog["type"])
+        previous = libraries.setdefault(key, catalog["library"])
+        if previous != catalog["library"]:
+            raise ValueError("catalog directory has conflicting libraries")
     config["catalogs"] = catalogs
     return config
 
 
 def save_config(path, values):
-    """The settings as written, mode 600: addons' urls can hold debrid keys. What `load_config`
-    derives (a catalog's type, slug and directory; the default relay url) is left out."""
-    raw = dict(values, catalogs=[{key: value for key, value in catalog.items() if key not in ("type", "slug", "directory")}
+    """The settings as written, mode 600: addon URLs can hold debrid keys.
+    Catalog identity is retained so item ids do not move when rows are reordered."""
+    raw = dict(values, catalogs=[{key: value for key, value in catalog.items() if key != "type"}
                                  for catalog in values.get("catalogs") or []])
     if raw.get("relay_url") == "http://%s" % raw.get("listen"):
         del raw["relay_url"]
-    descriptor = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w") as handle:
-        json.dump(raw, handle, indent=2)
-    os.replace(path + ".tmp", path)
+    write_json(path, raw, indent=2)
+
+
+def validate_config(path, values):
+    """Parse a candidate beside the real file before replacing the saved config."""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    descriptor, candidate = tempfile.mkstemp(prefix=".rex-stremio-config-", dir=directory)
+    os.close(descriptor)
+    os.chmod(candidate, 0o600)
+    try:
+        save_config(candidate, values)
+        return load_config(candidate)
+    finally:
+        try:
+            os.unlink(candidate)
+        except FileNotFoundError:
+            pass
 
 
 def expiry(url):
@@ -205,8 +470,12 @@ def stremio_item(config, catalog, vid, imdb, meta, video, probe, extension):
         "media_info": probe,
     }
     size = (probe.get("format") or {}).get("size")
+    try:
+        size = int(size) if size else None
+    except (TypeError, ValueError):
+        size = None
     if size and extension != "m3u8":
-        pushed["size"] = int(size)
+        pushed["size"] = size
     released = lambda value: str(value or "")[:10] if re.match(r"\d{4}-\d{2}-\d{2}", str(value or "")) else None
     year = re.match(r"\d{4}", str(meta.get("year") or meta.get("releaseInfo") or ""))
     if catalog["type"] == "movie":
@@ -236,141 +505,427 @@ class Sync:
         self.wake = threading.Event()
         self.status = "not synced yet"
         self.cache, self.locks, self.guard = {}, {}, threading.Lock()
+        self.cache_locks = {}
+        self.config_guard = threading.RLock()
+        # Feed publication and settings commits share this lock. Readers never take it, so a
+        # stalled rex request cannot stop the relay or settings page from serving.
+        self.publication_lock = threading.RLock()
+        self.config_version = 0
+        self.catalog_incomplete = False
 
-    def path(self, kind, vid):
-        os.makedirs(os.path.join(self.config["cache"], kind), exist_ok=True)
-        return os.path.join(self.config["cache"], kind, vid + ".json")
+    def path(self, kind, vid, config=None, version=None):
+        config = self.config if config is None else config
+        if version is None:
+            os.makedirs(os.path.join(config["cache"], kind), exist_ok=True)
+        else:
+            with self.config_guard:
+                current = self.config_version == version
+            if current:
+                os.makedirs(os.path.join(config["cache"], kind), exist_ok=True)
+        return os.path.join(config["cache"], kind, vid + ".json")
 
-    def cached(self, kind, vid, make):
-        path = self.path(kind, vid)
-        if not os.path.exists(path):
-            value = make()
-            with open(path + ".tmp", "w") as handle:
-                json.dump(value, handle)
-            os.replace(path + ".tmp", path)
-        with open(path) as handle:
-            return json.load(handle)
+    def cached(self, kind, vid, make, config=None, version=None):
+        path = self.path(kind, vid, config, version)
+        lock = self.record_lock(path)
+        with lock:
+            try:
+                with open(path) as handle:
+                    return json.load(handle)
+            except FileNotFoundError:
+                pass
+        value = make()
+        with lock:
+            if not os.path.exists(path):
+                if version is None:
+                    write_json(path, value)
+                else:
+                    with self.config_guard:
+                        if self.config_version == version:
+                            write_json(path, value)
+                return value
+            with open(path) as handle:
+                return json.load(handle)
 
-    def rex(self, method, path, body=None):
-        request = urllib.request.Request(self.config["rex_url"].rstrip("/") + path, method=method,
+    def record_lock(self, path):
+        with self.guard:
+            return self.cache_locks.setdefault(path, threading.RLock())
+
+    def cache_write(self, path, value, version=None):
+        """Write one cache record under its own lock; never hold it during a probe or relay ask."""
+        lock = self.record_lock(path)
+        with lock:
+            if version is not None:
+                with self.config_guard:
+                    if self.config_version != version:
+                        return False
+                    write_json(path, value)
+            else:
+                write_json(path, value)
+        return True
+
+    def cache_update(self, path, fields, version=None):
+        """Merge a small info-record update while holding its file lock."""
+        lock = self.record_lock(path)
+        with lock:
+            if version is not None:
+                with self.config_guard:
+                    if self.config_version != version:
+                        return False
+                    return self._cache_update_locked(path, fields)
+            return self._cache_update_locked(path, fields)
+
+    @staticmethod
+    def _cache_update_locked(path, fields):
+        try:
+            with open(path) as handle:
+                current = json.load(handle)
+        except (FileNotFoundError, ValueError, TypeError):
+            current = {}
+        if not isinstance(current, dict):
+            current = {}
+        current.update(fields)
+        write_json(path, current)
+        return True
+
+    def cache_remove(self, path, version=None):
+        lock = self.record_lock(path)
+        with lock:
+            if version is not None:
+                with self.config_guard:
+                    if self.config_version != version:
+                        return False
+                    return self._cache_remove_locked(path)
+            return self._cache_remove_locked(path)
+
+    @staticmethod
+    def _cache_remove_locked(path):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        return True
+
+    def store_cache(self, version, vid, value):
+        with self.config_guard:
+            if self.config_version != version:
+                return
+            with self.guard:
+                self.cache[vid] = value
+
+    def publish(self, version, method, path, body, config):
+        """Make one feed request only while its generation is still current.
+
+        The publication lock serializes this request with a settings commit, but the catalog
+        scan and probes happen before this method is entered. No config lock is held over I/O.
+        """
+        with self.publication_lock:
+            with self.config_guard:
+                if self.config_version != version:
+                    return None
+            return self.rex(method, path, body, config)
+
+    def rex(self, method, path, body=None, config=None):
+        config = self.config if config is None else config
+        request = urllib.request.Request(rex_endpoint(config["rex_url"], path), method=method,
                                          data=None if body is None else json.dumps(body).encode(),
                                          headers={"Content-Type": "application/json", "Accept": "application/json"})
         with urllib.request.urlopen(request, timeout=600) as response:
-            return json.loads(response.read() or b"{}")
+            answer = response_json(response)
+        if not isinstance(answer, dict):
+            raise ValueError("rex response must be an object")
+        return answer
 
-    def register(self):
+    def register(self, config=None):
+        config = self.config if config is None else config
         directories = {}
-        for catalog in self.config["catalogs"]:
+        for catalog in config["catalogs"]:
             kind = "movies" if catalog["type"] == "movie" else "shows"
             directories.setdefault(catalog["directory"], {"name": catalog["directory"]}).setdefault(kind, catalog["library"])
-        answer = self.rex("PUT", "/rex/sources/" + self.config["source"],
-                          {"url": self.config["relay_url"], "mount": self.config["mount"], "directories": list(directories.values())})
+        answer = self.rex("PUT", "/rex/sources/" + config["source"],
+                          {"url": config["relay_url"], "mount": config["mount"], "directories": list(directories.values())}, config)
         for ignored in answer.get("ignored") or []:
-            LOG.warning("rex ignored %s: %s", ignored.get("entry"), ignored.get("reason"))
+            if not isinstance(ignored, dict):
+                continue
+            LOG.warning("rex ignored %s: %s", safe_error(ignored.get("entry")), safe_error(ignored.get("reason")))
 
-    def streams(self, kind, sid):
+    def streams(self, kind, sid, config=None):
         """Every stream the addons that serve this item give, in the addons' order."""
-        addons = [addon for addon in self.config["addons"] if serves(addon.get("manifest") or {}, "stream", kind, sid)]
+        config = self.config if config is None else config
+        addons = [addon for addon in config["addons"]
+                  if isinstance(addon, dict) and isinstance(addon.get("url"), str)
+                  and serves(addon_manifest(addon), "stream", kind, sid)]
 
         def ask(addon):
+            manifest = addon_manifest(addon)
             try:
-                return get_json("%s/stream/%s/%s.json" % (addon_base(addon["url"]), kind, urllib.parse.quote(sid)), 30).get("streams") or []
+                answer = get_json("%s/stream/%s/%s.json" % (addon_base(addon["url"]), kind, urllib.parse.quote(sid)), 30)
+                streams = answer.get("streams") if isinstance(answer, dict) else []
+                return [stream for stream in streams or [] if isinstance(stream, dict)] if isinstance(streams, list) else []
             except Exception as error:
-                LOG.warning("%s: %s: %s", sid, (addon.get("manifest") or {}).get("name") or "addon", error)
+                LOG.warning("%s: %s: %s", sid, manifest.get("name") or "addon", safe_error(error))
                 return []
         with ThreadPoolExecutor(max(len(addons), 1)) as pool:
             return [stream for answer in pool.map(ask, addons) for stream in answer]
 
     def resolve(self, vid):
+        with self.config_guard:
+            config, version = copy.deepcopy(self.config), self.config_version
+        return self._resolve(vid, config, version)
+
+    def _resolve(self, vid, config, version):
         """The link an item plays from now: the best stream that opens. Cached an hour."""
         with self.guard:
             lock = self.locks.setdefault(vid, threading.Lock())
         with lock:  # one ask per item; other items resolve meanwhile
-            url, good_until = self.cache.get(vid, (None, 0))
+            with self.guard:
+                url, good_until = self.cache.get(vid, (None, 0))
             if time.time() < good_until:
-                return url
-            with open(self.path("info", vid)) as handle:
+                checked = opens(url)
+                if checked:
+                    self.store_cache(version, vid, (checked, good_until))
+                    return checked
+                with self.guard:
+                    self.cache.pop(vid, None)
+            with open(self.path("info", vid, config, version)) as handle:
                 info = json.load(handle)
-            for stream in ranked(self.streams(info["kind"], info["sid"]), self.config, info.get("stream")):
+            for stream in ranked(self.streams(info["kind"], info["sid"], config), config, info.get("stream")):
                 url = opens(stream["url"])
                 if not url:
                     continue
                 if not info.get("stream"):  # the first one that opens is what the probe describes
-                    with open(self.path("info", vid), "w") as handle:
-                        json.dump(dict(info, stream=stream_key(stream)), handle)
+                    self.cache_update(self.path("info", vid, config, version), {"stream": stream_key(stream)}, version)
                 elif stream_key(stream) != info["stream"]:
                     # ponytail: a fallback stream can differ from the probe rex holds (codec,
                     # container); delete cache/probes/<id>.json to re-probe if one will not play.
-                    LOG.warning("%s: probed stream gone, playing %s", vid, stream_key(stream))
-                self.cache[vid] = (url, expiry(url) - 3600)
+                    LOG.warning("%s: probed stream gone, playing %s", vid, safe_stream_key(stream_key(stream)))
+                self.store_cache(version, vid, (url, max(time.time(), min(expiry(stream["url"]), expiry(url)) - 3600)))
                 return url
             raise RuntimeError("no stream addon has a stream that opens")
 
-    def probe(self, vid, catalog):
-        url = "%s/%s/%s/%s.stream" % (self.config["relay_url"].rstrip("/"), catalog["directory"], catalog["slug"], vid)
-        out = subprocess.run([self.config["ffprobe"], "-v", "error", "-print_format", "json", "-show_format", "-show_streams",
+    def route_vid(self, path):
+        """Return an item id only for a configured directory, catalog and extension."""
+        match = re.fullmatch(r"/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)\.([A-Za-z0-9]+)", path)
+        if not match:
+            return None
+        directory, catalog_slug, vid, extension = match.groups()
+        with self.config_guard:
+            catalogs, cache = copy.deepcopy(self.config["catalogs"]), self.config["cache"]
+        catalog = next((catalog for catalog in catalogs
+                        if catalog["directory"] == directory and catalog["slug"] == catalog_slug), None)
+        if not catalog:
+            return None
+        suffix = vid[len(catalog_slug) + 1:] if vid.startswith(catalog_slug + "-") else ""
+        pattern = r"tt\d+" if catalog["type"] == "movie" else r"tt\d+-\d+-\d+"
+        if not re.fullmatch(pattern, suffix):
+            return None
+        info_path = os.path.join(cache, "info", vid + ".json")
+        if not os.path.isfile(info_path):
+            return None
+        if extension == "stream":
+            return vid
+        try:
+            with open(info_path) as handle:
+                info = json.load(handle)
+            if not isinstance(info, dict) or info.get("kind") != catalog["type"]:
+                return None
+            expected = info.get("extension")
+            if not expected:
+                probe_path = os.path.join(cache, "probes", vid + ".json")
+                with open(probe_path) as handle:
+                    probe = json.load(handle)
+                expected = CONTAINERS.get((probe.get("format") or {}).get("format_name"))
+            return vid if expected == extension else None
+        except (AttributeError, OSError, ValueError, TypeError):
+            return None
+
+    def probe(self, vid, catalog, config=None):
+        config = self.config if config is None else config
+        url = rex_endpoint(config["relay_url"], "/%s/%s/%s.stream" % (catalog["directory"], catalog["slug"], vid))
+        out = subprocess.run([config["ffprobe"], "-v", "error", "-print_format", "json", "-show_format", "-show_streams",
                               "-show_chapters", url], capture_output=True, timeout=300)
         if out.returncode != 0:
             raise RuntimeError(out.stderr.decode(errors="replace").strip()[-300:] or "ffprobe failed")
         return json.loads(out.stdout)
 
-    def catalog_items(self, catalog):
+    def catalog_items(self, catalog, config=None, version=None):
         """A catalog's films, or its series' episodes (Cinemeta's list of them), pushed by their
         IMDb ids so Plex names them; the catalog's own names and pictures are `display`, shown
         only until Plex names them."""
+        config = self.config if config is None else config
         kind, limit = catalog["type"], catalog["limit"]
+        complete = True
+        answer = get_json(catalog["url"])
+        if not isinstance(answer, dict) or not isinstance(answer.get("metas"), list):
+            raise ValueError("catalog response has no metas list")
+        if not answer["metas"]:
+            # An empty answer can be a provider outage. Keep the last feed rows until a
+            # non-empty response proves that this catalog is really empty.
+            complete = False
         wanted = []
-        for meta in get_json(catalog["url"]).get("metas") or []:
+        for meta in answer["metas"]:
+            if not isinstance(meta, dict):
+                complete = False
+                continue
             imdb = str(meta.get("imdb_id") or meta.get("id") or "").split(":")[0]
-            if not re.fullmatch(r"tt\d+", imdb) or len(wanted) >= limit:
+            if len(wanted) >= limit:
+                continue
+            if not re.fullmatch(r"tt\d+", imdb):
+                # A non-IMDb row cannot be represented in rex. Keep the old row until a
+                # later complete catalog response tells us it is really gone.
+                complete = False
                 continue  # rex identifies by IMDb id; a catalog's own ids name nothing to it
             # Ids carry the catalog: one film in two catalogs is two items.
             if kind == "movie":
                 wanted.append(("%s-%s" % (catalog["slug"], imdb), imdb, meta, None))
                 continue
             try:
-                full = get_json("%s/meta/series/%s.json" % (CINEMETA, imdb)).get("meta") or {}
+                response = get_json("%s/meta/series/%s.json" % (CINEMETA, imdb))
+                full = response.get("meta") if isinstance(response, dict) else None
+                if not isinstance(full, dict):
+                    raise ValueError("series response has no meta")
             except Exception as error:
-                LOG.warning("%s: %s", imdb, error)
+                complete = False
+                LOG.warning("%s: %s", imdb, safe_error(error))
                 continue
-            episodes = sorted((video for video in full.get("videos") or [] if video.get("season") and video.get("episode")),
-                              key=lambda video: (video["season"], video["episode"]))
+            raw_videos = full.get("videos")
+            if not isinstance(raw_videos, list) or not raw_videos:
+                complete = False
+                continue
+            episodes = []
+            for raw_video in raw_videos:
+                if not isinstance(raw_video, dict):
+                    complete = False
+                    continue
+                try:
+                    season, episode = int(raw_video.get("season")), int(raw_video.get("episode"))
+                except (TypeError, ValueError):
+                    complete = False
+                    continue
+                if season <= 0 or episode <= 0:
+                    complete = False
+                    continue
+                episodes.append(dict(raw_video, season=season, episode=episode))
+            episodes.sort(key=lambda video: (video["season"], video["episode"]))
             for video in episodes[:limit - len(wanted)]:
                 wanted.append(("%s-%s-%d-%d" % (catalog["slug"], imdb, video["season"], video["episode"]),
                                "%s:%d:%d" % (imdb, video["season"], video["episode"]), dict(full, **meta), video))
         items = []
         for vid, sid, meta, video in wanted:
-            self.cached("info", vid, lambda: {"kind": kind, "sid": sid})
+            info_path = self.path("info", vid, config, version)
+            expected_info = {"kind": kind, "sid": sid}
             try:
-                probe = self.cached("probes", vid, lambda: self.probe(vid, catalog))
-            except Exception as error:  # no stream that opens, or one ffprobe could not read
-                LOG.warning("%s: %s", vid, error)
+                info = self.cached("info", vid, lambda: expected_info, config, version)
+            except Exception as error:
+                complete = False
+                LOG.warning("%s: %s", vid, safe_error(error))
+                # A truncated JSON file is just as stale as a valid record for another item.
+                # Repair it before the probe so the next relay request sees a usable identity.
+                info = expected_info
+                self.cache_write(info_path, info, version)
+                self.cache_remove(self.path("probes", vid, config, version), version)
+            info_valid = isinstance(info, dict) and info.get("kind") == kind and info.get("sid") == sid
+            if not info_valid:
+                # Repair identity before probing. A stale identity means the derived probe belongs
+                # to a different source item and must not be reused for this one.
+                complete = False
+                info = expected_info
+                self.cache_write(info_path, info, version)
+                self.cache_remove(self.path("probes", vid, config, version), version)
+
+            # A corrupt or shape-invalid derived probe is repairable. Remove just that record
+            # and ask ffprobe once more; a real probe failure is still recorded as a partial
+            # catalog without repeatedly hammering the source.
+            probe_path = self.path("probes", vid, config, version)
+            probe = None
+            for attempt in range(2):
+                had_cache = os.path.isfile(probe_path)
+                try:
+                    probe = self.cached("probes", vid, lambda: self.probe(vid, catalog, config), config, version)
+                except Exception as error:  # no stream that opens, or one ffprobe could not read
+                    complete = False
+                    if attempt == 0 and had_cache:
+                        self.cache_remove(probe_path, version)
+                        continue
+                    LOG.warning("%s: %s", vid, safe_error(error))
+                    break
+                if isinstance(probe, dict) and isinstance(probe.get("format"), dict):
+                    break
+                complete = False
+                if attempt == 0:
+                    self.cache_remove(probe_path, version)
+                    continue
+                LOG.warning("%s: ffprobe returned no format", vid)
+                probe = None
+            if not isinstance(probe, dict) or not isinstance(probe.get("format"), dict):
                 continue
-            extension = CONTAINERS.get((probe.get("format") or {}).get("format_name"))
+            extension = CONTAINERS.get(probe["format"].get("format_name"))
             if not extension:
+                complete = False
                 LOG.warning("%s: a %s stream rex cannot take", vid, (probe.get("format") or {}).get("format_name"))
                 continue
-            items.append(stremio_item(self.config, catalog, vid, sid.split(":")[0], meta, video, probe, extension))
-        LOG.info("%s: %d of %d ready", catalog["url"].split("/catalog/")[-1], len(items), len(wanted))
+            if info.get("extension") != extension:
+                if not self.cache_update(info_path, {"extension": extension}, version):
+                    complete = False
+                    continue
+            try:
+                items.append(stremio_item(config, catalog, vid, sid.split(":")[0], meta, video, probe, extension))
+            except Exception as error:
+                complete = False
+                LOG.warning("%s: %s", vid, safe_error(error))
+        LOG.info("%s: %d of %d ready", safe_url(catalog["url"]), len(items), len(wanted))
+        self.catalog_incomplete = not complete
         return items
 
     def once(self):
-        self.register()
+        with self.config_guard:
+            config, version = copy.deepcopy(self.config), self.config_version
+        return self._once(config, version)
+
+    def _once(self, config, version):
+        # Register is one serialized feed request. The catalog scan and ffprobe calls below take
+        # neither publication_lock nor config_guard, so settings remain responsive while a source
+        # is slow. Each later request rechecks the generation immediately before publishing.
+        with self.publication_lock:
+            with self.config_guard:
+                if self.config_version != version:
+                    return
+            self.register(config)
         items = []
-        for catalog in self.config["catalogs"]:
+        incomplete = False
+        for catalog in config["catalogs"]:
             try:
-                items += self.catalog_items(catalog)
+                items += self.catalog_items(catalog, config, version)
+                incomplete |= self.catalog_incomplete
             except Exception as error:
-                self.status = "failed at %s: %s" % (catalog.get("title") or catalog["slug"], error)
-                LOG.warning("%s: %s", catalog["url"].split("/catalog/")[-1], error)
-                return  # a partial snapshot would remove the catalog that failed
+                incomplete = True
+                self.status = "failed at %s: %s" % (safe_error(catalog.get("title") or catalog["slug"]), safe_error(error))
+                LOG.warning("%s: %s", safe_url(catalog["url"]), safe_error(error))
+        if incomplete:
+            chunks = [items[at:at + 200] for at in range(0, len(items), 200)] or [[]]
+            for chunk in chunks:
+                answer = self.publish(version, "POST", "/rex/feed/%s/items" % config["source"], {"items": chunk}, config)
+                if answer is None:
+                    self.status = "settings changed during sync; retrying"
+                    return
+                for rejected in answer.get("rejected") or []:
+                    if not isinstance(rejected, dict):
+                        continue
+                    LOG.warning("rex rejected %s: %s", rejected.get("id"), safe_error(rejected.get("reason")))
+            self.status = "%s: partial sync, %d items upserted" % (time.strftime("%Y-%m-%d %H:%M"), len(items))
+            LOG.warning("upserted %d items without removing existing rows", len(items))
+            return
         session = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         chunks = [items[at:at + 200] for at in range(0, len(items), 200)] or [[]]
         for part, chunk in enumerate(chunks):
-            answer = self.rex("PUT", "/rex/feed/%s/snapshot" % self.config["source"],
-                              {"session": session, "part": part, "complete": part == len(chunks) - 1, "items": chunk})
+            answer = self.publish(version, "PUT", "/rex/feed/%s/snapshot" % config["source"],
+                                  {"session": session, "part": part, "complete": part == len(chunks) - 1, "items": chunk}, config)
+            if answer is None:
+                self.status = "settings changed during sync; retrying"
+                return
             for rejected in answer.get("rejected") or []:
-                LOG.warning("rex rejected %s: %s", rejected.get("id"), rejected.get("reason"))
+                if not isinstance(rejected, dict):
+                    continue
+                LOG.warning("rex rejected %s: %s", rejected.get("id"), safe_error(rejected.get("reason")))
         self.status = "%s: %d items in rex" % (time.strftime("%Y-%m-%d %H:%M"), len(items))
         LOG.info("pushed %d items: %s", len(items), {key: answer.get(key) for key in ("created", "updated", "removed")})
 
@@ -380,9 +935,11 @@ class Sync:
             try:
                 self.once()
             except Exception as error:
-                self.status = "failed: %s" % error
-                LOG.warning("sync: %s", error)
-            self.wake.wait(self.config["interval_minutes"] * 60)
+                self.status = "failed: %s" % safe_error(error)
+                LOG.warning("sync: %s", safe_error(error))
+            with self.config_guard:
+                interval = self.config["interval_minutes"]
+            self.wake.wait(interval * 60)
             self.wake.clear()
 
 
@@ -392,7 +949,12 @@ def own_network(handler):
     page's form."""
     try:
         client = ipaddress.ip_address(handler.client_address[0])
-        host = urllib.parse.urlsplit("//" + (handler.headers.get("Host") or "")).hostname or ""
+        host_header = handler.headers.get("Host") or ""
+        parsed_host = urllib.parse.urlsplit("//" + host_header)
+        if parsed_host.username or parsed_host.password or parsed_host.path or parsed_host.query or parsed_host.fragment:
+            return False
+        parsed_host.port  # reject an invalid port in a forged Host header
+        host = parsed_host.hostname or ""
         if host != "localhost":
             ipaddress.ip_address(host)
     except ValueError:
@@ -441,43 +1003,54 @@ button.plain{background:transparent;color:var(--accent)}form.inline{display:inli
 
 
 def shown(url):
-    """An addon's link without what may be a key in it: its host and its last path part."""
+    """An addon's link without what may be a key in its path or query."""
     parts = urllib.parse.urlsplit(addon_base(url))
-    return "%s/…/%s" % (parts.hostname, parts.path.rsplit("/", 1)[-1]) if parts.path.count("/") > 1 else parts.hostname
+    return parts.hostname or "addon"
 
 
 def page(config, status):
     esc = lambda value: html.escape(str(value), quote=True)
     rows = []
     for at, addon in enumerate(config["addons"]):
-        manifest = addon.get("manifest") or {}
+        if not isinstance(addon, dict) or not isinstance(addon.get("url"), str):
+            continue
+        manifest = addon_manifest(addon)
+        resources = manifest.get("resources") if isinstance(manifest.get("resources"), list) else []
         gives = [name for name in ("catalog", "stream") if any((entry if isinstance(entry, str) else entry.get("name")) == name
-                                                              for entry in manifest.get("resources") or [])]
+                                                                  for entry in resources if isinstance(entry, (str, dict)))]
         rows.append('<tr><td>%s<br><small>%s</small></td><td>%s</td><td><form class="inline" method="post" action="/addons/remove">'
                     '<input type="hidden" name="at" value="%d"><button class="plain">Remove</button></form></td></tr>'
                     % (esc(manifest.get("name") or "addon"), esc(shown(addon["url"])), esc(", ".join(gives) or "nothing rex uses"), at))
     taken = {catalog["url"]: catalog for catalog in config["catalogs"]}
     catalogs, n = [], 0
     for addon in config["addons"]:
-        for catalog in catalogs_of(addon.get("manifest") or {}):
+        if not isinstance(addon, dict) or not isinstance(addon.get("url"), str):
+            continue
+        manifest = addon_manifest(addon)
+        for catalog in catalogs_of(manifest):
             url = "%s/catalog/%s/%s.json" % (addon_base(addon["url"]), catalog["type"], catalog["id"])
             chosen = taken.get(url) or {}
             library = chosen.get("library") or ("Stremio Films" if catalog["type"] == "movie" else "Stremio Shows")
-            addon_name = (addon.get("manifest") or {}).get("name") or "addon"
+            addon_name = manifest.get("name") or "addon"
             name = "%s: %s (%s)" % (addon_name, catalog["name"],
                                     "films" if catalog["type"] == "movie" else "episodes")
             catalogs.append('<tr><td><input type="checkbox" id="c%d" name="take" value="%d"%s><input type="hidden" name="url%d" value="%s">'
-                            '<input type="hidden" name="title%d" value="%s"></td><td><label for="c%d">%s</label></td>'
+                            '<input type="hidden" name="title%d" value="%s"><input type="hidden" name="slug%d" value="%s">'
+                            '<input type="hidden" name="directory%d" value="%s"></td><td><label for="c%d">%s</label></td>'
                             '<td><input type="text" name="library%d" value="%s" aria-label="Library"></td>'
                             '<td><input type="number" min="1" name="limit%d" value="%s" aria-label="How many" style="width:5em"></td></tr>'
-                            % (n, n, " checked" if chosen else "", n, esc(url), n, esc(addon_name + " " + catalog["name"]), n, esc(name), n, esc(library),
-                               n, esc(chosen.get("limit") or 50)))
+                            % (n, n, " checked" if chosen else "", n, esc(url), n, esc(addon_name + " " + catalog["name"]),
+                               n, esc(chosen.get("slug") or ""), n, esc(chosen.get("directory") or ""), n, esc(name),
+                               n, esc(library), n, esc(chosen.get("limit") or 50)))
             n += 1
     resolutions = "".join('<option value="%s"%s>%s</option>' % (value, " selected" if str(config.get("max_resolution") or "") == value else "", label)
                           for value, label in (("", "any"), ("2160", "2160p (4K)"), ("1080", "1080p"), ("720", "720p")))
-    return PAGE % {"status": esc(status), "addons": "".join(rows) or '<tr><td colspan="3"><small>None yet.</small></td></tr>',
+    return PAGE % {"status": esc(safe_error(status)), "addons": "".join(rows) or '<tr><td colspan="3"><small>None yet.</small></td></tr>',
                    "catalogs": "".join(catalogs) or '<tr><td colspan="4"><small>Add an addon with catalogs, such as Cinemeta.</small></td></tr>',
-                   "resolutions": resolutions, "max_size_gb": esc(config.get("max_size_gb") or ""), "rex_url": esc(config["rex_url"])}
+                   "resolutions": resolutions, "max_size_gb": esc(config.get("max_size_gb") or ""),
+                   # The settings field is an authorized private input and must round-trip exactly;
+                   # safe_url is reserved for logs/status and addon display.
+                   "rex_url": esc(config["rex_url"])}
 
 
 class App:
@@ -485,48 +1058,77 @@ class App:
 
     def __init__(self, config_path, config, sync):
         self.config_path, self.config, self.sync = config_path, config, sync
-        self.saving = threading.Lock()
+        self.saving = threading.RLock()
 
     def settings(self, form):
         """The settings form -> the config, saved, then a sync."""
-        values = dict(self.config)
-        catalogs = []
-        for at in form.get("take", []):
-            url = form.get("url" + at, [""])[0]
-            limit = form.get("limit" + at, ["50"])[0]
-            catalogs.append({"url": url, "title": form.get("title" + at, [""])[0] or None,
-                             "library": form.get("library" + at, [""])[0].strip() or None,
-                             "limit": int(limit) if limit.isdigit() and int(limit) > 0 else 50})
-        values["catalogs"] = [{key: value for key, value in catalog.items() if value} for catalog in catalogs]
-        values["max_resolution"] = int(form["max_resolution"][0]) if form.get("max_resolution", [""])[0].isdigit() else None
-        size = form.get("max_size_gb", [""])[0]
-        values["max_size_gb"] = float(size) if re.fullmatch(r"\d+(\.\d+)?", size) and float(size) > 0 else None
-        if form.get("rex_url", [""])[0].startswith(("http://", "https://")):
-            values["rex_url"] = form["rex_url"][0].rstrip("/")
-        self.save(values)
+        with self.saving:
+            values = dict(self.config)
+            catalogs = []
+            for at in form.get("take", []):
+                url = form.get("url" + at, [""])[0]
+                limit = form.get("limit" + at, ["50"])[0]
+                catalog = {"url": url, "title": form.get("title" + at, [""])[0] or None,
+                           "library": form.get("library" + at, [""])[0].strip() or None,
+                           "limit": int(limit) if limit.isdigit() and int(limit) > 0 else 50}
+                for key in ("slug", "directory"):
+                    value = form.get(key + at, [""])[0]
+                    if value:
+                        catalog[key] = value
+                previous = next((saved for saved in self.config["catalogs"] if saved["url"] == url), None)
+                if (previous and catalog.get("directory") == previous.get("directory")
+                        and catalog.get("library") != previous.get("library")
+                        and previous.get("directory") == slug(previous.get("library", ""))):
+                    # The hidden directory is a derived value from the prior library. Re-derive it
+                    # when that label changes; a different prior directory is a deliberate override.
+                    catalog["directory"] = slug(catalog.get("library") or "")
+                catalogs.append(catalog)
+            values["catalogs"] = [{key: value for key, value in catalog.items() if value} for catalog in catalogs]
+            values["max_resolution"] = int(form["max_resolution"][0]) if form.get("max_resolution", [""])[0].isdigit() else None
+            size = form.get("max_size_gb", [""])[0]
+            values["max_size_gb"] = float(size) if re.fullmatch(r"\d+(\.\d+)?", size) and float(size) > 0 else None
+            rex_url = form.get("rex_url", [""])[0].strip()
+            if not rex_url.startswith(("http://", "https://")):
+                raise ValueError("rex_url must be an http(s) URL")
+            values["rex_url"] = rex_url
+            self.save(values)
 
     def add_addon(self, url):
         base = addon_base(url)
         if not base.startswith(("http://", "https://")):
             raise ValueError("not an addon link")
         manifest = get_json(base + "/manifest.json", 30)
-        if not manifest.get("id") or not manifest.get("resources"):
+        if (not isinstance(manifest, dict) or not isinstance(manifest.get("id"), str)
+                or not manifest["id"] or not isinstance(manifest.get("resources"), list)):
             raise ValueError("no Stremio manifest at that link")
-        addons = [addon for addon in self.config["addons"] if addon_base(addon["url"]) != base]
-        self.save(dict(self.config, addons=addons + [{"url": base + "/manifest.json", "manifest": manifest}]), sync=False)
+        with self.saving:
+            addons = [addon for addon in self.config["addons"]
+                      if isinstance(addon, dict) and addon_base(addon.get("url")) != base]
+            self.save(dict(self.config, addons=addons + [{"url": base + "/manifest.json", "manifest": manifest}]), sync=False)
 
     def remove_addon(self, at):
-        addons = list(self.config["addons"])
-        gone = addons.pop(at)
-        prefix = addon_base(gone["url"]) + "/catalog/"
-        self.save(dict(self.config, addons=addons, catalogs=[c for c in self.config["catalogs"] if not c["url"].startswith(prefix)]))
+        with self.saving:
+            if not isinstance(at, int) or at < 0 or at >= len(self.config["addons"]):
+                raise ValueError("addon index is out of range")
+            addons = list(self.config["addons"])
+            gone = addons.pop(at)
+            prefix = addon_base(gone["url"]) + "/catalog/"
+            self.save(dict(self.config, addons=addons,
+                           catalogs=[c for c in self.config["catalogs"] if not c["url"].startswith(prefix)]))
 
     def save(self, values, sync=True):
         with self.saving:
-            save_config(self.config_path, values)
-            fresh = load_config(self.config_path)
-            self.config.clear()
-            self.config.update(fresh)
+            fresh = validate_config(self.config_path, values)
+            with self.sync.publication_lock:
+                with self.sync.config_guard:
+                    # Persist the same normalized identity that is installed in memory. This makes
+                    # the first save durable across restart and keeps later reorder/remove stable.
+                    save_config(self.config_path, fresh)
+                    self.config.clear()
+                    self.config.update(fresh)
+                    self.sync.config_version += 1
+                    with self.sync.guard:
+                        self.sync.cache.clear()
         if sync:
             self.sync.wake.set()
 
@@ -543,7 +1145,8 @@ class App:
                     if not own_network(self):
                         self.send_error(403)
                         return
-                    body = page(app.config, app.sync.status).encode()
+                    with app.sync.config_guard:
+                        body = page(app.config, app.sync.status).encode()
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(body)))
@@ -552,14 +1155,14 @@ class App:
                     if self.command != "HEAD":
                         self.wfile.write(body)
                     return
-                match = re.fullmatch(r"/[\w-]+/[\w-]+/([\w-]+)\.\w+", path)
-                if not match or not os.path.exists(app.sync.path("info", match[1])):
+                vid = app.sync.route_vid(path)
+                if not vid:
                     self.send_error(404)
                     return
                 try:
-                    url = app.sync.resolve(match[1])
+                    url = app.sync.resolve(vid)
                 except Exception as error:
-                    LOG.warning("resolve %s: %s", match[1], error)
+                    LOG.warning("resolve %s: %s", vid, safe_error(error))
                     self.send_error(502, "No stream addon has a stream that opens")
                     return
                 self.send_response(302)
@@ -573,22 +1176,40 @@ class App:
                 if not own_network(self):
                     self.send_error(403)
                     return
-                length = min(int(self.headers.get("Content-Length") or 0), 1 << 20)
-                form = urllib.parse.parse_qs(self.rfile.read(length).decode(errors="replace"))
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    self.send_error(400, "invalid request")
+                    return
+                if length < 0:
+                    self.send_error(400, "invalid request")
+                    return
+                if length > MAX_FORM_BYTES:
+                    self.send_error(413, "request body too large")
+                    return
+                try:
+                    form = urllib.parse.parse_qs(self.rfile.read(length).decode(errors="replace"),
+                                                 max_num_fields=MAX_FORM_FIELDS)
+                except ValueError:
+                    self.send_error(400, "invalid request")
+                    return
                 path = urllib.parse.urlsplit(self.path).path
                 try:
                     if path == "/addons":
                         app.add_addon(form.get("url", [""])[0])
                     elif path == "/addons/remove":
-                        app.remove_addon(int(form.get("at", ["-1"])[0]))
+                        value = form.get("at", [""])[0]
+                        if not re.fullmatch(r"\d+", value):
+                            raise ValueError("addon index is out of range")
+                        app.remove_addon(int(value))
                     elif path == "/settings":
                         app.settings(form)
                     else:
                         self.send_error(404)
                         return
                 except Exception as error:
-                    LOG.warning("settings: %s", error)
-                    self.send_error(400, str(error)[:200])
+                    LOG.warning("settings: %s", safe_error(error))
+                    self.send_error(400, "invalid request")
                     return
                 self.send_response(303)
                 self.send_header("Location", "/")
@@ -611,7 +1232,7 @@ def main(argv=None):
     host, port = config["listen"].rsplit(":", 1)
     server = ThreadingHTTPServer((host, int(port)), App(args.config, config, sync).handler())
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    LOG.info("relay and settings on http://%s/, %d catalog(s), rex at %s", config["listen"], len(config["catalogs"]), config["rex_url"])
+    LOG.info("relay and settings on http://%s/, %d catalog(s), rex at %s", config["listen"], len(config["catalogs"]), safe_url(config["rex_url"]))
     if args.once:
         sync.once()
         return 0

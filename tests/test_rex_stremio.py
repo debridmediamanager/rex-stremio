@@ -38,6 +38,26 @@ DMM = STREMIO["/dmm/stream/movie/tt30144839.json"]["streams"]
 TORRENTIO = STREMIO["/torrentio/stream/series/tt11540908:1:2.json"]["streams"]
 
 
+def read_json(path):
+    with open(path) as handle:
+        return json.load(handle)
+
+
+def stop_server(server):
+    server.shutdown()
+    server.server_close()
+
+
+def stop_process(process):
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+
 def addon_host():
     """The captured addons on one local host, `/<addon>/...` as each answered."""
     class Handler(BaseHTTPRequestHandler):
@@ -87,6 +107,20 @@ class Logic(unittest.TestCase):
                          "https://torrentio.strem.fun/realdebrid=K")
         self.assertEqual(rex_stremio.addon_base(" https://v3-cinemeta.strem.io/manifest.json "), "https://v3-cinemeta.strem.io")
 
+    def test_sensitive_urls_are_redacted(self):
+        self.assertEqual(rex_stremio.safe_url("https://user:secret@example.test/private/key?token=secret"),
+                         "https://example.test")
+        self.assertNotIn("secret", rex_stremio.safe_error(ValueError("failed https://user:secret@example.test/key?token=secret")))
+        rendered = rex_stremio.page({**rex_stremio.DEFAULTS,
+                                     "rex_url": "https://user:secret@example.test/rex/path?token=secret"},
+                                    "failed https://user:secret@example.test/error")
+        self.assertIn("https://user:secret@example.test/rex/path?token=secret", rendered)
+        self.assertNotIn("error", rendered)
+
+    def test_rex_endpoint_keeps_path_and_query(self):
+        self.assertEqual(rex_stremio.rex_endpoint("https://rex.example/rex/path?token=secret", "/rex/sources/stremio"),
+                         "https://rex.example/rex/path/rex/sources/stremio?token=secret")
+
     def test_serves_by_manifest(self):
         cinemeta, torrentio, dmm, httpx = (MANIFESTS["/%s/manifest.json" % name] for name in ("cinemeta", "torrentio", "dmm", "httpx"))
         self.assertTrue(rex_stremio.serves(torrentio, "stream", "series", "tt11540908:1:2"))
@@ -94,6 +128,10 @@ class Logic(unittest.TestCase):
         self.assertTrue(rex_stremio.serves(httpx, "stream", "movie", "tt6262770"))  # types and prefixes at the top
         self.assertFalse(rex_stremio.serves(cinemeta, "stream", "movie", "tt6262770"))
         self.assertFalse(rex_stremio.serves(dmm, "stream", "other", "dmm:1"))
+        self.assertFalse(rex_stremio.serves({"resources": 3, "types": "movie"}, "stream", "movie", "tt1"))
+        self.assertFalse(rex_stremio.serves({"resources": [{"name": "stream", "types": 3, "idPrefixes": 4}]},
+                                             "stream", "movie", "tt1"))
+        self.assertEqual(rex_stremio.page({**rex_stremio.DEFAULTS, "addons": [{"url": "https://invalid/manifest.json", "manifest": []}]}, "ok").count("invalid"), 1)
 
     def test_catalogs_listed_without_a_question(self):
         cinemeta = rex_stremio.catalogs_of(MANIFESTS["/cinemeta/manifest.json"])
@@ -103,6 +141,8 @@ class Logic(unittest.TestCase):
         dmm = rex_stremio.catalogs_of(MANIFESTS["/dmm/manifest.json"])
         self.assertEqual([(c["type"], c["id"]) for c in dmm], [("movie", "casted-movies"), ("series", "casted-shows")])
         self.assertEqual(rex_stremio.catalogs_of(MANIFESTS["/torrentio/manifest.json"]), [])
+        self.assertEqual(rex_stremio.catalogs_of({"catalogs": 4}), [])
+        self.assertEqual(rex_stremio.catalogs_of({"catalogs": [{"type": "movie", "id": 7, "extra": 3}, 4]}), [])
 
     def test_quality_from_labels(self):
         self.assertEqual(rex_stremio.quality(TORRENTIO[0]), (2160, int(5.49 * (1 << 30))))
@@ -110,6 +150,7 @@ class Logic(unittest.TestCase):
         self.assertEqual(rex_stremio.quality(DMM[1]), (0, int(83.77 * (1 << 30))))
         pdm = STREMIO["/pdm/stream/movie/tt0012349.json"]["streams"][0]
         self.assertEqual(rex_stremio.quality(pdm), (1080, int(859.37 * (1 << 20))))
+        self.assertEqual(rex_stremio.quality({"name": "9" * 400 + " GB", "behaviorHints": {}}), (0, None))
 
     def test_ranked(self):
         # A link out to DMM's site is no file; the labelled 4K streams beat the unlabelled one.
@@ -134,14 +175,129 @@ class Logic(unittest.TestCase):
         self.assertEqual(config["relay_url"], "http://127.0.0.1:9982")
         with self.assertRaises(ValueError):
             rex_stremio.load_config(config_file(self, {"catalogs": [{"url": "https://a/meta/movie/tt1.json"}]}))
+        with self.assertRaises(ValueError):
+            rex_stremio.load_config(config_file(self, {"listen": "not-a-host-port"}))
+        with self.assertRaises(ValueError):
+            rex_stremio.load_config(config_file(self, {"rex_url": "http://127.0.0.1:not-a-port"}))
+        with self.assertRaises(ValueError):
+            rex_stremio.load_config(config_file(self, {"rex_url": None}))
 
-    def test_save_config_private_and_without_derived_values(self):
+    def test_unassigned_duplicate_identity_keeps_historical_suffix_sequence(self):
+        path = config_file(self, {"catalogs": [
+            {"url": "https://a/catalog/movie/one.json", "title": "Popular", "library": "Films"},
+            {"url": "https://a/catalog/movie/two.json", "title": "Popular", "library": "Films"},
+            {"url": "https://a/catalog/movie/three.json", "title": "Popular", "library": "Films"}]})
+        before = rex_stremio.load_config(path)
+        expected = ["popular", "popular-2", "popular-2-2"]
+        self.assertEqual([catalog["slug"] for catalog in before["catalogs"]], expected)
+        rex_stremio.save_config(path, before)
+        after = rex_stremio.load_config(path)
+        self.assertEqual([catalog["slug"] for catalog in after["catalogs"]], expected)
+
+    def test_write_json_replace_failure_does_not_close_reused_descriptor(self):
+        work = tempfile.mkdtemp(prefix="rex-stremio-write-")
+        target = os.path.join(work, "target.json")
+        other = os.path.join(work, "other")
+        handles = {}
+        original_fdopen = rex_stremio.os.fdopen
+
+        def tracked_fdopen(descriptor, *args, **kwargs):
+            handles["descriptor"] = descriptor
+            return original_fdopen(descriptor, *args, **kwargs)
+
+        def failed_replace(source, destination):
+            descriptor = os.open(other, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            handles["reused"] = descriptor
+            self.assertEqual(descriptor, handles["descriptor"])
+            raise OSError("fixture replace failure")
+
+        with unittest.mock.patch.object(rex_stremio.os, "fdopen", side_effect=tracked_fdopen), \
+             unittest.mock.patch.object(rex_stremio.os, "replace", side_effect=failed_replace):
+            with self.assertRaises(OSError):
+                rex_stremio.write_json(target, {"written": True})
+        os.write(handles["reused"], b"still open")
+        os.close(handles["reused"])
+        self.assertFalse(os.path.exists(target))
+
+    def test_explicit_slug_is_reserved_and_conflicts_are_rejected(self):
+        config = rex_stremio.load_config(config_file(self, {"catalogs": [
+            {"url": "https://a/catalog/movie/top.json", "title": "Popular"},
+            {"url": "https://b/catalog/movie/other.json", "slug": "popular"}]}))
+        self.assertEqual([catalog["slug"] for catalog in config["catalogs"]], ["popular-2", "popular"])
+        with self.assertRaises(ValueError):
+            rex_stremio.load_config(config_file(self, {"catalogs": [
+                {"url": "https://a/catalog/movie/one.json", "slug": "same"},
+                {"url": "https://b/catalog/movie/two.json", "slug": "same"}]}))
+        with self.assertRaises(ValueError):
+            rex_stremio.load_config(config_file(self, {"catalogs": [
+                {"url": "https://a/catalog/movie/one.json", "directory": "films", "library": "One"},
+                {"url": "https://b/catalog/movie/two.json", "directory": "films", "library": "Two"}]}))
+
+    def test_save_config_private_and_with_stable_catalog_identity(self):
         path = config_file(self, {"catalogs": [{"url": "https://a/catalog/movie/top.json", "library": "Films"}]})
         rex_stremio.save_config(path, rex_stremio.load_config(path))
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
-        saved = json.load(open(path))
-        self.assertEqual(saved["catalogs"], [{"url": "https://a/catalog/movie/top.json", "library": "Films", "limit": 50}])
+        saved = read_json(path)
+        self.assertEqual(saved["catalogs"], [{"url": "https://a/catalog/movie/top.json", "library": "Films", "limit": 50,
+                                               "slug": "top", "directory": "films"}])
         self.assertNotIn("relay_url", saved)
+
+    def test_explicit_catalog_identity_survives_save(self):
+        path = config_file(self, {"catalogs": [{"url": "https://a/catalog/movie/top.json", "title": "Popular",
+                                                "slug": "stable-popular", "directory": "stable-films"}]})
+        config = rex_stremio.load_config(path)
+        rex_stremio.save_config(path, config)
+        loaded = rex_stremio.load_config(path)["catalogs"][0]
+        self.assertEqual((loaded["slug"], loaded["directory"]), ("stable-popular", "stable-films"))
+
+    def test_first_save_persists_identity_across_reorder_remove_and_add(self):
+        path = config_file(self, {"catalogs": []})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        app = rex_stremio.App(path, config, sync)
+        values = dict(config, catalogs=[
+            {"url": "https://a/catalog/movie/one.json", "title": "Popular", "library": "Films"},
+            {"url": "https://a/catalog/movie/two.json", "title": "Popular", "library": "Films"},
+            {"url": "https://a/catalog/movie/three.json", "title": "Popular", "library": "Films"}])
+        app.save(values, sync=False)
+        first = {catalog["url"]: (catalog["slug"], catalog["directory"]) for catalog in rex_stremio.load_config(path)["catalogs"]}
+        self.assertEqual(sorted(slug for slug, _ in first.values()), ["popular", "popular-2", "popular-2-2"])
+        restarted = rex_stremio.load_config(path)
+        app.save(dict(restarted, catalogs=list(reversed(restarted["catalogs"]))), sync=False)
+        reordered = {catalog["url"]: catalog["slug"] for catalog in rex_stremio.load_config(path)["catalogs"]}
+        self.assertEqual(reordered, {url: slug for url, (slug, _) in first.items()})
+        retained = [catalog for catalog in rex_stremio.load_config(path)["catalogs"] if not catalog["url"].endswith("two.json")]
+        retained.append({"url": "https://a/catalog/movie/four.json", "title": "Popular", "library": "Films"})
+        app.save(dict(restarted, catalogs=retained), sync=False)
+        final = {catalog["url"]: catalog["slug"] for catalog in rex_stremio.load_config(path)["catalogs"]}
+        self.assertEqual(final["https://a/catalog/movie/one.json"], first["https://a/catalog/movie/one.json"][0])
+        self.assertEqual(final["https://a/catalog/movie/three.json"], first["https://a/catalog/movie/three.json"][0])
+        self.assertEqual(final["https://a/catalog/movie/four.json"], "popular-2")
+
+    def test_cache_info_updates_do_not_drop_each_other(self):
+        path = config_file(self, {"cache": tempfile.mkdtemp(prefix="rex-stremio-cache-")})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        info_path = sync.path("info", "item")
+        sync.cache_write(info_path, {"kind": "movie", "sid": "tt1"})
+        barrier = threading.Barrier(2)
+
+        def update(fields):
+            barrier.wait()
+            sync.cache_update(info_path, fields)
+
+        first = threading.Thread(target=update, args=({"stream": "file.mkv"},))
+        second = threading.Thread(target=update, args=({"extension": "mkv"},))
+        first.start()
+        second.start()
+        first.join(5)
+        second.join(5)
+        self.assertEqual(read_json(info_path), {"kind": "movie", "sid": "tt1", "stream": "file.mkv", "extension": "mkv"})
+
+    def test_ranked_ignores_malformed_stream_rows(self):
+        self.assertEqual(rex_stremio.ranked([None, {"url": None, "behaviorHints": []}, DMM[2]], {}), [DMM[2]])
+        self.assertEqual(rex_stremio.ranked(3, {}), [])
+        self.assertEqual(rex_stremio.quality({"url": DMM[2]["url"], "behaviorHints": {"videoSize": "nan"}}), (0, None))
 
     def test_own_network(self):
         own = rex_stremio.own_network
@@ -150,6 +306,8 @@ class Logic(unittest.TestCase):
         self.assertTrue(own(FakeRequest("100.101.1.2", "localhost:9982")))  # Tailscale
         self.assertFalse(own(FakeRequest("8.8.8.8", "192.168.1.20:9982")))
         self.assertFalse(own(FakeRequest("127.0.0.1", "evil.example:9982")))  # a name rebound to us
+        self.assertFalse(own(FakeRequest("127.0.0.1", "trusted@127.0.0.1:9982")))  # Host userinfo is not an IP host
+        self.assertFalse(own(FakeRequest("127.0.0.1", "127.0.0.1:not-a-port")))
         self.assertFalse(own(FakeRequest("127.0.0.1", "127.0.0.1:9982", "POST", "https://evil.example")))
         self.assertTrue(own(FakeRequest("127.0.0.1", "127.0.0.1:9982", "POST", "http://127.0.0.1:9982")))
 
@@ -160,7 +318,7 @@ class Logic(unittest.TestCase):
         shows, films = config["catalogs"]
         meta = STREMIO["/cinemeta/meta/series/tt11540908.json"]["meta"]
         video = [v for v in meta["videos"] if (v.get("season"), v.get("episode")) == (1, 2)][0]
-        probe = json.load(open(os.path.join(FIXTURES, "probe-top-shows-tt11540908-1-2.json")))
+        probe = read_json(os.path.join(FIXTURES, "probe-top-shows-tt11540908-1-2.json"))
         pushed = rex_stremio.stremio_item(config, shows, "top-shows-tt11540908-1-2", "tt11540908", meta, video, probe, "mkv")
         self.assertEqual((pushed["kind"], pushed["season"], pushed["episode"], pushed["ids"]), ("episode", 1, 2, {"imdb": "tt11540908"}))
         self.assertEqual(pushed["path"], "stremio-shows/top-shows/top-shows-tt11540908-1-2.mkv")
@@ -168,7 +326,7 @@ class Logic(unittest.TestCase):
         self.assertEqual(pushed["display"]["show"]["title"], meta["name"])
         catalog = STREMIO["/dmm/catalog/movie/casted-movies.json"]["metas"][0]
         pushed = rex_stremio.stremio_item(config, films, "dmm-cast-tt30144839", "tt30144839", catalog, None,
-                                          json.load(open(os.path.join(FIXTURES, "probe-dmm-cast-tt30144839.json"))), "ts")
+                                          read_json(os.path.join(FIXTURES, "probe-dmm-cast-tt30144839.json")), "ts")
         self.assertEqual((pushed["kind"], pushed["ids"], pushed["path"][-3:]), ("movie", {"imdb": "tt30144839"}, ".ts"))
         self.assertEqual(pushed["display"]["title"], "One Battle After Another")
 
@@ -178,7 +336,7 @@ class Resolve(unittest.TestCase):
 
     def setUp(self):
         self.host, self.base = addon_host()
-        self.addCleanup(self.host.shutdown)
+        self.addCleanup(stop_server, self.host)
         work = tempfile.mkdtemp(prefix="rex-stremio-")
         self.config = rex_stremio.load_config(config_file(self, {"cache": work, "addons": [addon(self.base, "torrentio")]}))
         self.sync = rex_stremio.Sync(self.config)
@@ -195,7 +353,7 @@ class Resolve(unittest.TestCase):
     def test_first_that_opens_is_pinned_then_kept(self):
         with unittest.mock.patch.object(rex_stremio, "opens", self.opens({TORRENTIO[0]["url"]})):
             self.assertEqual(self.sync.resolve("carrie-1-2"), TORRENTIO[1]["url"] + "#final")
-        info = json.load(open(self.sync.path("info", "carrie-1-2")))
+        info = read_json(self.sync.path("info", "carrie-1-2"))
         self.assertEqual(info["stream"], rex_stremio.stream_key(TORRENTIO[1]))
         # An hour later the best link opens again, but the pinned one still plays first.
         self.sync.cache.clear()
@@ -216,13 +374,52 @@ class Resolve(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.sync.resolve("carrie-1-2")
 
+    def test_cached_link_is_rechecked_before_reuse(self):
+        self.sync.cache["carrie-1-2"] = ("http://cached.invalid/file", time.time() + 3600)
+        with unittest.mock.patch.object(rex_stremio, "opens", self.opens({"http://cached.invalid/file"})):
+            self.assertEqual(self.sync.resolve("carrie-1-2"), TORRENTIO[0]["url"] + "#final")
+        self.assertEqual(self.opened[0], "http://cached.invalid/file")
+
+    def test_relay_requires_configured_directory_and_catalog(self):
+        path = config_file(self, {"cache": tempfile.mkdtemp(prefix="rex-stremio-route-"),
+                                  "addons": [addon(self.base, "torrentio")],
+                                  "catalogs": [{"url": "%s/catalog/series/top.json" % self.base, "title": "Carrie"}]})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        with open(sync.path("info", "carrie-tt11540908-1-2"), "w") as handle:
+            json.dump({"kind": "series", "sid": "tt11540908:1:2", "extension": "mkv"}, handle)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), rex_stremio.App(path, config, sync).handler())
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(stop_server, server)
+        with unittest.mock.patch.object(rex_stremio, "opens", lambda url: url):
+            with self.assertRaises(urllib.error.HTTPError) as answer:
+                urllib.request.urlopen("http://127.0.0.1:%d/wrong/carrie/carrie-1-2.mkv" % server.server_address[1])
+        self.assertEqual(answer.exception.code, 404)
+        opener = urllib.request.build_opener(NoRedirect)
+        with unittest.mock.patch.object(rex_stremio, "opens", lambda url: url):
+            with self.assertRaises(urllib.error.HTTPError) as answer:
+                opener.open("http://127.0.0.1:%d/stremio-shows/carrie/carrie-tt11540908-1-2.mkv" % server.server_address[1])
+        self.assertEqual(answer.exception.code, 302)
+
+    def test_relay_does_not_confuse_overlapping_catalog_slugs(self):
+        path = config_file(self, {"cache": tempfile.mkdtemp(prefix="rex-stremio-route-"),
+                                  "catalogs": [
+                                      {"url": "%s/catalog/movie/one.json" % self.base, "slug": "cat", "directory": "films"},
+                                      {"url": "%s/catalog/movie/two.json" % self.base, "slug": "cat-2", "directory": "films"}]})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        with open(sync.path("info", "cat-2-tt1234567"), "w") as handle:
+            json.dump({"kind": "movie", "sid": "tt1234567", "extension": "mkv"}, handle)
+        self.assertIsNone(sync.route_vid("/films/cat/cat-2-tt1234567.mkv"))
+        self.assertEqual(sync.route_vid("/films/cat-2/cat-2-tt1234567.mkv"), "cat-2-tt1234567")
+
 
 class Settings(unittest.TestCase):
     """The page, through HTTP: add addons, choose catalogs, rank streams."""
 
     def setUp(self):
         self.host, self.base = addon_host()
-        self.addCleanup(self.host.shutdown)
+        self.addCleanup(stop_server, self.host)
         work = tempfile.mkdtemp(prefix="rex-stremio-")
         self.path = os.path.join(work, "config.json")
         rex_stremio.save_config(self.path, {"listen": "127.0.0.1:0", "cache": work})
@@ -230,7 +427,7 @@ class Settings(unittest.TestCase):
         self.sync = rex_stremio.Sync(self.config)
         server = ThreadingHTTPServer(("127.0.0.1", 0), rex_stremio.App(self.path, self.config, self.sync).handler())
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.shutdown)
+        self.addCleanup(stop_server, server)
         self.url = "http://127.0.0.1:%d" % server.server_address[1]
 
     def post(self, path, form, origin=None):
@@ -245,7 +442,7 @@ class Settings(unittest.TestCase):
         self.assertIn("Cinemeta: Popular (films)", page)
         self.assertIn("Torrentio", page)
         self.assertNotIn("Torrentio: ", page)  # no catalogs of its own
-        saved = json.load(open(self.path))
+        saved = read_json(self.path)
         self.assertEqual([a["manifest"]["name"] for a in saved["addons"]], ["Cinemeta", "Torrentio"])
         self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
         # Rows 0 and 1 are Cinemeta's Popular films and series.
@@ -253,16 +450,44 @@ class Settings(unittest.TestCase):
                                 "library0": "Films", "limit0": "10", "url1": "%s/cinemeta/catalog/series/top.json" % self.base,
                                 "title1": "Cinemeta Popular", "library1": "", "limit1": "x", "max_resolution": "1080", "max_size_gb": "20",
                                 "rex_url": "http://192.168.1.20:32400/"})
-        saved = json.load(open(self.path))
+        saved = read_json(self.path)
         self.assertEqual(saved["catalogs"], [
-            {"url": "%s/cinemeta/catalog/movie/top.json" % self.base, "title": "Cinemeta Popular", "library": "Films", "limit": 10},
-            {"url": "%s/cinemeta/catalog/series/top.json" % self.base, "title": "Cinemeta Popular", "limit": 50}])
-        self.assertEqual((saved["max_resolution"], saved["max_size_gb"], saved["rex_url"]), (1080, 20.0, "http://192.168.1.20:32400"))
+            {"url": "%s/cinemeta/catalog/movie/top.json" % self.base, "title": "Cinemeta Popular", "library": "Films", "limit": 10,
+             "slug": "cinemeta-popular", "directory": "films"},
+            {"url": "%s/cinemeta/catalog/series/top.json" % self.base, "title": "Cinemeta Popular", "limit": 50,
+             "library": "Stremio Shows", "slug": "cinemeta-popular-2", "directory": "stremio-shows"}])
+        self.assertEqual((saved["max_resolution"], saved["max_size_gb"], saved["rex_url"]), (1080, 20.0, "http://192.168.1.20:32400/"))
         self.assertEqual([c["slug"] for c in self.config["catalogs"]], ["cinemeta-popular", "cinemeta-popular-2"])
         self.assertTrue(self.sync.wake.is_set())
         page = self.post("/addons/remove", {"at": "0"})
         self.assertNotIn("Cinemeta: Popular", page)
-        self.assertEqual(json.load(open(self.path))["catalogs"], [])  # its catalogs leave with it
+        self.assertEqual(read_json(self.path)["catalogs"], [])  # its catalogs leave with it
+
+    def test_rex_url_round_trips_path_and_query(self):
+        configured = "http://rex.example/rex/path/?token=private&mode=lan"
+        rendered = self.post("/settings", {"rex_url": configured})
+        self.assertEqual(read_json(self.path)["rex_url"], configured)
+        self.assertIn('name="rex_url" value="http://rex.example/rex/path/?token=private&amp;mode=lan"', rendered)
+
+    def test_library_edit_rederives_directory_but_preserves_manual_override(self):
+        url = "%s/cinemeta/catalog/movie/top.json" % self.base
+        self.post("/addons", {"url": "%s/cinemeta/manifest.json" % self.base})
+        self.post("/settings", {"take": ["0"], "url0": url, "title0": "Popular", "library0": "Films", "limit0": "10",
+                                 "rex_url": "http://127.0.0.1:32400"})
+        chosen = self.config["catalogs"][0]
+        self.post("/settings", {"take": ["0"], "url0": url, "title0": "Popular", "slug0": chosen["slug"],
+                                 "directory0": chosen["directory"], "library0": "Renamed Films", "limit0": "10",
+                                 "rex_url": "http://127.0.0.1:32400"})
+        edited = read_json(self.path)["catalogs"][0]
+        self.assertEqual((edited["slug"], edited["directory"], edited["library"]), (chosen["slug"], "renamed-films", "Renamed Films"))
+        self.post("/settings", {"take": ["0"], "url0": url, "title0": "Popular", "slug0": edited["slug"],
+                                 "directory0": "keep-me", "library0": "Manual Films", "limit0": "10",
+                                 "rex_url": "http://127.0.0.1:32400"})
+        self.post("/settings", {"take": ["0"], "url0": url, "title0": "Popular", "slug0": edited["slug"],
+                                 "directory0": "keep-me", "library0": "Manual Renamed", "limit0": "10",
+                                 "rex_url": "http://127.0.0.1:32400"})
+        manual = read_json(self.path)["catalogs"][0]
+        self.assertEqual((manual["directory"], manual["library"]), ("keep-me", "Manual Renamed"))
 
     def test_refuses_other_pages_and_non_addons(self):
         with self.assertRaises(urllib.error.HTTPError) as answer:
@@ -271,7 +496,314 @@ class Settings(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as answer:
             self.post("/addons", {"url": "%s/nothing/manifest.json" % self.base})
         self.assertEqual(answer.exception.code, 400)
-        self.assertEqual(json.load(open(self.path)).get("addons", []), [])
+        self.assertEqual(read_json(self.path).get("addons", []), [])
+
+    def test_invalid_settings_do_not_change_disk_or_running_config(self):
+        before = read_json(self.path)
+        running = dict(self.config)
+        with self.assertRaises(urllib.error.HTTPError) as answer:
+            self.post("/settings", {"take": ["0"], "url0": "not-a-catalog", "title0": "bad", "limit0": "1"})
+        self.assertEqual(answer.exception.code, 400)
+        self.assertEqual(read_json(self.path), before)
+        self.assertEqual(self.config, running)
+
+    def test_remove_requires_an_existing_index(self):
+        self.post("/addons", {"url": "%s/cinemeta/manifest.json" % self.base})
+        with self.assertRaises(urllib.error.HTTPError) as answer:
+            self.post("/addons/remove", {})
+        self.assertEqual(answer.exception.code, 400)
+        self.assertEqual(len(read_json(self.path)["addons"]), 1)
+
+    def test_save_invalidates_resolve_cache(self):
+        self.sync.cache["item"] = ("https://example.test/file", time.time() + 3600)
+        self.config["max_resolution"] = 1080
+        rex_stremio.App(self.path, self.config, self.sync).save(dict(self.config), sync=False)
+        self.assertEqual(self.sync.cache, {})
+
+    def test_rejects_oversized_form_body(self):
+        host, port = self.url.removeprefix("http://").split(":")
+        with socket.create_connection((host, int(port)), timeout=30) as client:
+            client.sendall(("POST /settings HTTP/1.1\r\nHost: %s:%s\r\nOrigin: %s\r\nContent-Length: %d\r\n\r\n"
+                            % (host, port, self.url, rex_stremio.MAX_FORM_BYTES + 1)).encode())
+            self.assertIn(b" 413 ", client.recv(1024))
+
+
+class PartialSync(unittest.TestCase):
+    def test_malformed_cached_info_does_not_drop_healthy_item(self):
+        path = config_file(self, {"cache": tempfile.mkdtemp(prefix="rex-stremio-cache-"),
+                                  "catalogs": [{"url": "https://a/catalog/movie/one.json"}]})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        catalog = config["catalogs"][0]
+        vid = "%s-tt1234567" % catalog["slug"]
+        with open(sync.path("info", vid), "w") as handle:
+            json.dump(["corrupt"], handle)
+        probe = {"format": {"format_name": "matroska,webm", "size": "1"}}
+        def probe_after_repair(*args):
+            self.assertEqual(read_json(sync.path("info", vid))["sid"], "tt1234567")
+            return probe
+        with unittest.mock.patch.object(rex_stremio, "get_json", return_value={"metas": [{"id": "tt1234567", "name": "Healthy"}]}), \
+             unittest.mock.patch.object(sync, "probe", side_effect=probe_after_repair):
+            items = sync.catalog_items(catalog)
+        self.assertEqual(len(items), 1)
+        self.assertTrue(sync.catalog_incomplete)
+        with open(sync.path("info", vid)) as handle:
+            self.assertEqual(json.load(handle)["sid"], "tt1234567")
+
+    def test_empty_catalog_is_partial(self):
+        path = config_file(self, {"catalogs": [{"url": "https://a/catalog/movie/one.json"}]})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        with unittest.mock.patch.object(rex_stremio, "get_json", return_value={"metas": []}):
+            self.assertEqual(sync.catalog_items(config["catalogs"][0]), [])
+        self.assertTrue(sync.catalog_incomplete)
+
+    def test_corrupt_info_is_repaired_before_real_probe_and_handler(self):
+        host, base = addon_host()
+        self.addCleanup(stop_server, host)
+        work = tempfile.mkdtemp(prefix="rex-stremio-probe-")
+        path = config_file(self, {"cache": work, "relay_url": "http://127.0.0.1:0", "ffprobe": os.path.join(HERE, "fake_ffprobe.py"),
+                                  "catalogs": [{"url": "%s/cinemeta/catalog/movie/top.json" % base, "title": "Top films", "limit": 1}]})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), rex_stremio.App(path, config, sync).handler())
+        server_url = "http://127.0.0.1:%d" % server.server_address[1]
+        config["relay_url"] = server_url
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(stop_server, server)
+        vid = "top-films-tt34384900"
+        with open(sync.path("info", vid), "w") as handle:
+            handle.write("{truncated")
+        sync.resolve = lambda item: "http://media.example/file.mkv"
+        with unittest.mock.patch.object(rex_stremio, "opens", lambda url: url):
+            items = sync.catalog_items(config["catalogs"][0])
+        self.assertEqual([item["id"] for item in items], ["st-" + vid])
+        self.assertEqual(read_json(sync.path("info", vid))["sid"], "tt34384900")
+        self.assertEqual(read_json(sync.path("probes", vid))["format"]["format_name"], "hls")
+
+    def test_corrupt_probe_is_repaired_by_real_handler_and_ffprobe(self):
+        host, base = addon_host()
+        self.addCleanup(stop_server, host)
+        work = tempfile.mkdtemp(prefix="rex-stremio-probe-")
+        path = config_file(self, {"cache": work, "relay_url": "http://127.0.0.1:0", "ffprobe": os.path.join(HERE, "fake_ffprobe.py"),
+                                  "catalogs": [{"url": "%s/cinemeta/catalog/movie/top.json" % base, "title": "Top films", "limit": 1}]})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), rex_stremio.App(path, config, sync).handler())
+        config["relay_url"] = "http://127.0.0.1:%d" % server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(stop_server, server)
+        vid = "top-films-tt34384900"
+        with open(sync.path("info", vid), "w") as handle:
+            json.dump({"kind": "movie", "sid": "tt34384900"}, handle)
+        with open(sync.path("probes", vid), "w") as handle:
+            handle.write("{truncated")
+        sync.resolve = lambda item: "http://media.example/file.m3u8"
+        with unittest.mock.patch.object(rex_stremio, "opens", lambda url: url):
+            items = sync.catalog_items(config["catalogs"][0])
+        self.assertEqual([item["id"] for item in items], ["st-" + vid])
+        self.assertEqual(read_json(sync.path("probes", vid))["format"]["format_name"], "hls")
+
+    def test_incomplete_catalog_upserts_healthy_items_without_snapshot(self):
+        path = config_file(self, {"catalogs": [
+            {"url": "https://a/catalog/movie/one.json"},
+            {"url": "https://a/catalog/movie/two.json"}]})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        healthy = {"id": "healthy", "path": "films/healthy.mkv"}
+        calls = []
+        sync.register = lambda config=None: None
+        sync.catalog_items = unittest.mock.Mock(side_effect=[[healthy], RuntimeError("fixture failure")])
+
+        def rex(method, request_path, body=None, config=None):
+            calls.append((method, request_path, body))
+            return {"created": 1}
+
+        sync.rex = rex
+        sync.once()
+        self.assertEqual(calls, [("POST", "/rex/feed/stremio/items", {"items": [healthy]})])
+
+    def test_settings_change_aborts_obsolete_snapshot(self):
+        path = config_file(self, {"catalogs": [{"url": "https://a/catalog/movie/one.json"}]})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        app = rex_stremio.App(path, config, sync)
+        healthy = {"id": "healthy", "path": "films/healthy.mkv"}
+        calls = []
+        sync.register = lambda config=None: None
+
+        def catalog_items(catalog, config=None, version=None):
+            app.save(dict(sync.config), sync=False)
+            return [healthy]
+
+        sync.catalog_items = catalog_items
+        sync.rex = lambda method, request_path, body=None, config=None: calls.append((method, request_path, body)) or {}
+        sync.once()
+        self.assertEqual(calls, [])
+
+    def test_malformed_catalog_rows_are_partial_upserts(self):
+        path = config_file(self, {"catalogs": [{"url": "https://a/catalog/movie/one.json"}]})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        calls = []
+        sync.register = lambda config=None: None
+        with unittest.mock.patch.object(rex_stremio, "get_json", return_value={"metas": [{"id": "source-only-id"}]}), \
+             unittest.mock.patch.object(sync, "cached", side_effect=AssertionError("invalid rows must not be probed")):
+            sync.rex = lambda method, request_path, body=None, config=None: calls.append((method, request_path, body)) or {}
+            sync.once()
+        self.assertEqual(calls, [("POST", "/rex/feed/stremio/items", {"items": []})])
+
+
+class Concurrency(unittest.TestCase):
+    def test_blocked_catalog_scan_allows_save_and_aborts_old_feed(self):
+        path = config_file(self, {"catalogs": [{"url": "https://a/catalog/movie/top.json"}],
+                                  "cache": tempfile.mkdtemp(prefix="rex-stremio-lock-")})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        app = rex_stremio.App(path, config, sync)
+        entered, release, saved = threading.Event(), threading.Event(), threading.Event()
+        errors = []
+        calls = []
+
+        sync.register = lambda config=None: None
+
+        def blocked_catalog(*args, **kwargs):
+            entered.set()
+            release.wait(10)
+            return [{"id": "stale", "path": "films/stale.mkv"}]
+
+        sync.catalog_items = blocked_catalog
+        sync.rex = lambda method, request_path, body=None, config=None: calls.append((method, request_path, body)) or {}
+        worker = threading.Thread(target=sync.once)
+        worker.start()
+        self.assertTrue(entered.wait(5))
+
+        def save():
+            try:
+                app.save(dict(sync.config), sync=False)
+            except Exception as error:  # surface worker failures after cleanup
+                errors.append(error)
+            finally:
+                saved.set()
+
+        saver = threading.Thread(target=save)
+        saver.start()
+        try:
+            self.assertTrue(saved.wait(2), "settings save waited for the catalog scan")
+        finally:
+            release.set()
+            worker.join(10)
+            saver.join(10)
+        self.assertFalse(errors)
+        self.assertEqual(calls, [])
+
+    def test_old_generation_cache_update_cannot_land_after_save(self):
+        path = config_file(self, {"cache": tempfile.mkdtemp(prefix="rex-stremio-cache-")})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        app = rex_stremio.App(path, config, sync)
+        info_path = sync.path("info", "item")
+        record = sync.record_lock(info_path)
+        record.acquire()
+        started = threading.Event()
+
+        def old_writer():
+            started.set()
+            sync.cache_update(info_path, {"stream": "stale"}, version=0)
+
+        writer = threading.Thread(target=old_writer)
+        writer.start()
+        self.assertTrue(started.wait(5))
+        app.save(dict(sync.config), sync=False)
+        record.release()
+        writer.join(5)
+        self.assertFalse(writer.is_alive())
+        self.assertFalse(os.path.exists(info_path))
+
+    def test_old_generation_cached_initialization_cannot_land_after_save(self):
+        path = config_file(self, {"cache": tempfile.mkdtemp(prefix="rex-stremio-cache-")})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        app = rex_stremio.App(path, config, sync)
+        entered, release = threading.Event(), threading.Event()
+
+        def make_probe():
+            entered.set()
+            release.wait(10)
+            return {"format": {"format_name": "hls"}}
+
+        result = []
+        worker = threading.Thread(target=lambda: result.append(sync.cached("probes", "item", make_probe,
+                                                                             config, version=0)))
+        worker.start()
+        self.assertTrue(entered.wait(5))
+        app.save(dict(sync.config), sync=False)
+        release.set()
+        worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result, [{"format": {"format_name": "hls"}}])
+        self.assertFalse(os.path.exists(sync.path("probes", "item")))
+
+    def test_old_generation_remove_cannot_delete_after_save(self):
+        path = config_file(self, {"cache": tempfile.mkdtemp(prefix="rex-stremio-cache-")})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        app = rex_stremio.App(path, config, sync)
+        info_path = sync.path("info", "item")
+        sync.cache_write(info_path, {"kind": "movie", "sid": "tt1"})
+        record = sync.record_lock(info_path)
+        record.acquire()
+        started = threading.Event()
+
+        def old_remove():
+            started.set()
+            sync.cache_remove(info_path, version=0)
+
+        worker = threading.Thread(target=old_remove)
+        worker.start()
+        self.assertTrue(started.wait(5))
+        app.save(dict(sync.config), sync=False)
+        record.release()
+        worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(os.path.exists(info_path))
+
+    def test_blocked_rex_request_does_not_block_relay_or_settings_get(self):
+        path = config_file(self, {"catalogs": [{"url": "https://a/catalog/movie/top.json"}],
+                                  "cache": tempfile.mkdtemp(prefix="rex-stremio-lock-")})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        app = rex_stremio.App(path, config, sync)
+        vid = "top-tt1234567"
+        with open(sync.path("info", vid), "w") as handle:
+            json.dump({"kind": "movie", "sid": "tt1234567", "extension": "mkv"}, handle)
+        sync.resolve = lambda item: "http://media.example/file.mkv"
+        entered, release = threading.Event(), threading.Event()
+
+        def blocked_rex(*args, **kwargs):
+            entered.set()
+            self.assertTrue(release.wait(10))
+            return {}
+
+        sync.rex = blocked_rex
+        sync.catalog_items = lambda *args, **kwargs: []
+        worker = threading.Thread(target=sync.once)
+        worker.start()
+        self.assertTrue(entered.wait(10))
+        server = ThreadingHTTPServer(("127.0.0.1", 0), app.handler())
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(stop_server, server)
+        base = "http://127.0.0.1:%d" % server.server_address[1]
+        started = time.monotonic()
+        self.assertIn("rex-stremio", urllib.request.urlopen(base + "/", timeout=2).read().decode())
+        self.assertLess(time.monotonic() - started, 2)
+        opener = urllib.request.build_opener(NoRedirect)
+        with self.assertRaises(urllib.error.HTTPError) as answer:
+            opener.open(base + "/stremio-films/top/top-tt1234567.mkv", timeout=2)
+        self.assertEqual(answer.exception.code, 302)
+        release.set()
+        worker.join(10)
+        self.assertFalse(worker.is_alive())
 
 
 @unittest.skipUnless(os.path.exists(os.environ.get("REX_BIN", "/nonexistent")), "REX_BIN names no rex binary")
@@ -285,7 +817,7 @@ class AgainstRex(unittest.TestCase):
         self.rex = subprocess.Popen([os.environ["REX_BIN"], "--port", str(self.port), "--catalog", os.path.join(self.work, "catalog.json"),
                                      "--token", self.TOKEN, "--no-state", "--assert-claimed"],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
-        self.addCleanup(self.rex.terminate)
+        self.addCleanup(stop_process, self.rex)
         for _ in range(100):
             try:
                 self.get("/identity")
@@ -293,26 +825,27 @@ class AgainstRex(unittest.TestCase):
             except OSError:
                 time.sleep(0.1)
         host, base = addon_host()
-        self.addCleanup(host.shutdown)
+        self.addCleanup(stop_server, host)
         cinemeta = rex_stremio.CINEMETA
         rex_stremio.CINEMETA = base + "/cinemeta"
         self.addCleanup(setattr, rex_stremio, "CINEMETA", cinemeta)
         relay = free_port()
         path = os.path.join(self.work, "config.json")
-        json.dump({"rex_url": "http://127.0.0.1:%d" % self.port, "listen": "127.0.0.1:%d" % relay, "cache": os.path.join(self.work, "cache"),
-                   "ffprobe": os.path.join(HERE, "fake_ffprobe.py"),
-                   "addons": [addon(base, "dmm"), addon(base, "cinemeta"), addon(base, "httpx"), addon(base, "torrentio")],
-                   "catalogs": [
-                       {"url": base + "/dmm/catalog/movie/casted-movies.json", "title": "DMM Cast"},
-                       {"url": base + "/cinemeta/catalog/movie/top.json", "title": "Top films", "limit": 2},
-                       {"url": base + "/cinemeta/catalog/series/top.json", "title": "Top shows", "limit": 3},
-                       {"url": base + "/pdm/catalog/movie/publicdomainmovies.json", "title": "Public domain", "limit": 3}]},
-                  open(path, "w"))
+        with open(path, "w") as handle:
+            json.dump({"rex_url": "http://127.0.0.1:%d" % self.port, "listen": "127.0.0.1:%d" % relay, "cache": os.path.join(self.work, "cache"),
+                       "ffprobe": os.path.join(HERE, "fake_ffprobe.py"),
+                       "addons": [addon(base, "dmm"), addon(base, "cinemeta"), addon(base, "httpx"), addon(base, "torrentio")],
+                       "catalogs": [
+                           {"url": base + "/dmm/catalog/movie/casted-movies.json", "title": "DMM Cast"},
+                           {"url": base + "/cinemeta/catalog/movie/top.json", "title": "Top films", "limit": 2},
+                           {"url": base + "/cinemeta/catalog/series/top.json", "title": "Top shows", "limit": 3},
+                           {"url": base + "/pdm/catalog/movie/publicdomainmovies.json", "title": "Public domain", "limit": 3}]},
+                      handle)
         self.config = rex_stremio.load_config(path)
         self.sync = rex_stremio.Sync(self.config)
         server = ThreadingHTTPServer(("127.0.0.1", relay), rex_stremio.App(path, self.config, self.sync).handler())
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.shutdown)
+        self.addCleanup(stop_server, server)
         self.relay = relay
         # The captured links are real hosts' (and their keys redacted): taken as opening, as they did.
         patch = unittest.mock.patch.object(rex_stremio, "opens", lambda url: url)
@@ -350,6 +883,37 @@ class AgainstRex(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as answer:
             opener.open("http://127.0.0.1:%d/stremio-films/dmm-cast/dmm-cast-tt30144839.ts" % self.relay, timeout=30)
         self.assertEqual(answer.exception.headers["Location"], DMM[2]["url"])
+
+    def test_empty_catalog_keeps_existing_rows_and_upserts_healthy_addition(self):
+        self.sync.once()
+
+        def rows():
+            sections = self.get("/library/sections")["MediaContainer"]["Directory"]
+            result = []
+            for section in sections:
+                entries = self.get("/library/sections/%s/all" % section["key"])["MediaContainer"].get("Metadata") or []
+                for entry in entries:
+                    detail = self.get("/library/metadata/%s" % entry["ratingKey"])["MediaContainer"]["Metadata"][0]
+                    parts = (detail.get("Media") or [{}])[0].get("Part") or [{}]
+                    result.append(parts[0].get("file"))
+            return set(result)
+
+        before = rows()
+        new_catalog = {"url": self.config["catalogs"][1]["url"], "title": "New Top", "library": "New Films",
+                       "limit": 1, "slug": "new-top", "directory": "new-films", "type": "movie"}
+        with self.sync.config_guard:
+            self.sync.config["catalogs"].append(new_catalog)
+        vid = "new-top-tt34384900"
+        rex_stremio.write_json(self.sync.path("probes", vid), read_json(os.path.join(FIXTURES, "probe-top-films-tt34384900.json")))
+        dmm_url = "/dmm/catalog/movie/casted-movies.json"
+        original = STREMIO[dmm_url]
+        STREMIO[dmm_url] = dict(original, metas=[])
+        self.addCleanup(STREMIO.__setitem__, dmm_url, original)
+
+        self.sync.once()
+        after = rows()
+        self.assertTrue(before.issubset(after))
+        self.assertIn("/mnt/rex-stremio/new-films/new-top/new-top-tt34384900.m3u8", after)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):

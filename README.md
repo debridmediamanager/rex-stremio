@@ -51,11 +51,14 @@ To run it as a service, copy `rex-stremio.service` to `~/.config/systemd/user/` 
 
 ```bash
 docker build -t rex-stremio .
-docker run -d --name rex-stremio -p 127.0.0.1:9982:9982 -v "$PWD/data:/data" rex-stremio
+docker run -d --name rex-stremio -p 192.168.1.20:9982:9982 -v "$PWD/data:/data" rex-stremio
 ```
 
-In Docker, set `relay_url` in `data/config.json` to an address rex can reach the container at,
-for example `http://192.168.1.20:9982` (see below).
+Replace `192.168.1.20` with the Docker host's LAN IP. The relay is private-network software;
+keep the Docker host's firewall/private-network boundary in place. Set `relay_url` in
+`data/config.json` to the same LAN address (for example, `http://192.168.1.20:9982`) so rex can
+reach the container (see below). If you bring an existing config into the image, set its
+`listen` to `0.0.0.0:9982`; a new Docker config gets that value from the image environment.
 
 ## Settings
 
@@ -73,13 +76,20 @@ The page writes `config.json` (mode 600). You can also edit it yourself and rest
 | `max_resolution` | any | `2160`, `1080` or `720`: no stream above it plays |
 | `max_size_gb` | any | No stream larger than this plays |
 | `addons` | | Each addon's manifest `url`, and its `manifest` as it was when added |
-| `catalogs` | | Each catalog's `url` (`<addon>/catalog/<movie or series>/<id>.json`), `library`, `limit` (default 50) and `title` |
+| `catalogs` | | Each catalog's `url` (`<addon>/catalog/<movie or series>/<id>.json`), `library`, `limit` (default 50), `title`, and its persisted `slug`/`directory` identity |
 
 ## Limits
 
 - Episodes come from Cinemeta and use its season and episode numbers. For a few shows these are
   not TMDB's, which rex follows, so an episode can land in the wrong place.
 - A series catalog's **How many** counts episodes, not shows.
+- A partial or empty catalog response is kept as a partial sync: existing rex rows stay in place,
+  while healthy rows from the other catalogs are still added. A later complete response can remove
+  rows that really disappeared.
+- Catalog slugs and directories are saved with the configuration, so reordering or editing other
+  catalogs does not silently move an existing catalog's item ids. Newly selected catalogs receive
+  a collision-free identity. Editing a library name updates its placement; an explicitly chosen
+  directory remains a manual override.
 - rex knows each title by the stream it was first checked with. If that link stops opening and
   another stream plays instead, it can differ (another codec or container) and fail to play.
   Delete the title's file in `cache/probes/` and it is checked again on the next sync.
