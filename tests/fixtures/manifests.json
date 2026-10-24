@@ -1,5 +1,5 @@
 {
- "_provenance": "Stremio addons' real manifests, captured 2026-10-24: Cinemeta, Torrentio and DMM Cast (with a made-up Cast id; the manifest is the same for every account) as their hosts answered; httpx's as its source (src/server.ts) defines it. Public Domain Movies' was not captured: it is left out, as an addon nobody added. USA TV Next's (live TV), 2026-10-24. PenguPlay's, configured with its Live TV source (the configuration is in the URL, not the manifest), 2026-10-24. Hyper's and Eclipsia's, 2026-10-24.",
+ "_provenance": "Stremio addons' real manifests, captured 2026-10-24: Cinemeta, Torrentio and DMM Cast (with a made-up Cast id; the manifest is the same for every account) as their hosts answered; httpx's as its source (src/server.ts) defines it. Public Domain Movies' was not captured: it is left out, as an addon nobody added. USA TV Next's (live TV), 2026-10-24. PenguPlay's, configured with its Live TV source (the configuration is in the URL, not the manifest), 2026-10-24. Hyper's and Eclipsia's, 2026-10-24. Cartoon Network's, 2026-10-24.",
  "routes": {
   "/cinemeta/manifest.json": {
    "id": "com.linvo.cinemeta",
@@ -1574,6 +1574,52 @@
     "configurable": true,
     "configurationRequired": false,
     "configureUrl": "https://jsn.eclipsia.dpdns.org/configure"
+   }
+  },
+  "/cartoon/manifest.json": {
+   "id": "org.cartoon_network",
+   "version": "1.0.0",
+   "name": "Cartoon Network",
+   "description": "The Cartoon Network Stremio Addon lets you stream a wide range of Cartoon Network shows directly within Stremio. It\u2019s a community-made, unofficial addon.",
+   "types": [
+    "movie",
+    "series"
+   ],
+   "catalogs": [
+    {
+     "type": "movie",
+     "id": "cartoon_network_movie",
+     "name": "Cartoon Network",
+     "extra": [
+      {
+       "name": "skip",
+       "isRequired": false
+      }
+     ]
+    },
+    {
+     "type": "series",
+     "id": "cartoon_network_series",
+     "name": "Cartoon Network",
+     "extra": [
+      {
+       "name": "skip",
+       "isRequired": false
+      }
+     ]
+    }
+   ],
+   "resources": [
+    "catalog",
+    "meta"
+   ],
+   "idPrefixes": [
+    "tmdb"
+   ],
+   "logo": "https://raw.githubusercontent.com/johnchrisdc/stremio-cartoon-network/refs/heads/main/potato-inc.png",
+   "stremioAddonsConfig": {
+    "issuer": "https://stremio-addons.net",
+    "signature": "eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..OCazw3GP0SIkE3Htmo9H1w.3p6AhQCXb8-sIxbD4sSmMbW-aCkIvNDEduDB6rViiDBiGOuHYGMMG8G6JByATbBkMXziLlttduL3qTrDWZB4FyUYZ84p-8pL8gRKkHdqOn_z58OUz0WSRMts-XrO58_K.SFb81L0ZYkbQVSj5iNOByQ"
    }
   }
  }

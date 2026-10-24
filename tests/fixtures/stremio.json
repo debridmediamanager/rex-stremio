@@ -1,5 +1,5 @@
 {
- "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams. USA TV Next's (a live TV addon, 2026-10-24) catalog for two channels, ABC (first 3 streams) and CW (no stream). PenguPlay's Live TV channels catalog (two channels), 2026-10-24. Comet's answer for an unconfigured install (2026-10-24): one 'stream' linking its web page (comet.feels.legal, text/html), served here from /page/. Hyper's and Eclipsia's answers for The Shawshank Redemption (2026-10-24), their links' hosts replaced by /hdr/ on the fake host, which answers 429 without the stream's proxyHeaders as the real ones did; their proxyHeaders kept.",
+ "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams. USA TV Next's (a live TV addon, 2026-10-24) catalog for two channels, ABC (first 3 streams) and CW (no stream). PenguPlay's Live TV channels catalog (two channels), 2026-10-24. Comet's answer for an unconfigured install (2026-10-24): one 'stream' linking its web page (comet.feels.legal, text/html), served here from /page/. Hyper's and Eclipsia's answers for The Shawshank Redemption (2026-10-24), their links' hosts replaced by /hdr/ on the fake host, which answers 429 without the stream's proxyHeaders as the real ones did; their proxyHeaders kept. Cartoon Network's films catalog (first 2, TMDB ids), its own meta answers (no IMDb id) and the TMDB addon's (tmdb.elfhosted.com, cut to a few fields) for them, 2026-10-24.",
  "routes": {
   "/dmm/catalog/movie/casted-movies.json": {
    "metas": [
@@ -1221,6 +1221,84 @@
      "url": "{STREAMS}/hdr/eclipsia-7.mp4"
     }
    ]
+  },
+  "/cartoon/catalog/movie/cartoon_network_movie.json": {
+   "metas": [
+    {
+     "id": "tmdb:537061",
+     "type": "movie",
+     "name": "Steven Universe: The Movie",
+     "poster": "https://image.tmdb.org/t/p/w500/8mRgpubxHqnqvENK4Bei30xMDvy.jpg",
+     "background": "https://image.tmdb.org/t/p/original/re3ZvlKJg04iLpLRf1xTKHS2wLU.jpg",
+     "posterShape": "regular",
+     "imdbRating": 8.2,
+     "year": 2019,
+     "description": "Two years after bringing peace to the galaxy, Steven Universe sees his past come back to haunt him in the form of a deranged Gem who wants to destroy the Earth."
+    },
+    {
+     "id": "tmdb:59387",
+     "type": "movie",
+     "name": "The Powerpuff Girls Movie",
+     "poster": "https://image.tmdb.org/t/p/w500/yAFalW8UtdJg1z1gPjXx8C1sXZq.jpg",
+     "background": "https://image.tmdb.org/t/p/original/9JYhHvfdLC0rUI1AtXyw6l4bUpV.jpg",
+     "posterShape": "regular",
+     "imdbRating": 6.838,
+     "year": 2002,
+     "description": "After destroying the city of Townsville in a game of tag, a trio of superpowered little girls must redeem themselves by stopping a vengeful monkey's plot for world domination."
+    }
+   ]
+  },
+  "/cartoon/meta/movie/tmdb:537061.json": {
+   "id": "tmdb:537061",
+   "type": "movie",
+   "name": "Steven Universe: The Movie",
+   "description": "Two years after bringing peace to the galaxy, Steven Universe sees his past come back to haunt him in the form of a deranged Gem who wants to destroy the Earth.",
+   "poster": "https://image.tmdb.org/t/p/w500/8mRgpubxHqnqvENK4Bei30xMDvy.jpg",
+   "background": "https://image.tmdb.org/t/p/original/re3ZvlKJg04iLpLRf1xTKHS2wLU.jpg",
+   "genres": "Animation, Family, Adventure, Fantasy, Drama, TV Movie",
+   "cast": "Zach Callison, Deedee Magno Hall, Estelle, Michaela Dietz, Sarah Stiles",
+   "director": "Rebecca Sugar",
+   "year": 2019,
+   "runtime": 83,
+   "language": "en",
+   "country": "United States of America"
+  },
+  "/cartoon/meta/movie/tmdb:59387.json": {
+   "id": "tmdb:59387",
+   "type": "movie",
+   "name": "The Powerpuff Girls Movie",
+   "description": "After destroying the city of Townsville in a game of tag, a trio of superpowered little girls must redeem themselves by stopping a vengeful monkey's plot for world domination.",
+   "poster": "https://image.tmdb.org/t/p/w500/yAFalW8UtdJg1z1gPjXx8C1sXZq.jpg",
+   "background": "https://image.tmdb.org/t/p/original/9JYhHvfdLC0rUI1AtXyw6l4bUpV.jpg",
+   "genres": "Animation, Action, Family",
+   "cast": "Cathy Cavadini, Tara Strong, E. G. Daily, Roger L. Jackson, Tom Kane",
+   "director": "Craig McCracken",
+   "year": 2002,
+   "runtime": 74,
+   "language": "en",
+   "country": "United States of America"
+  },
+  "/tmdb/meta/movie/tmdb:537061.json": {
+   "meta": {
+    "id": "tmdb:537061",
+    "imdb_id": "tt10515852",
+    "name": "Steven Universe: The Movie",
+    "type": "movie",
+    "year": "2019",
+    "poster": "https://image.tmdb.org/t/p/w500/8mRgpubxHqnqvENK4Bei30xMDvy.jpg",
+    "description": "Two years after bringing peace to the galaxy, Steven Universe sees his past come back to haunt him in the form of a deranged Gem who wants to destroy the Earth."
+   }
+  },
+  "/tmdb/meta/movie/tmdb:59387.json": {
+   "meta": {
+    "id": "tmdb:59387",
+    "imdb_id": "tt0289408",
+    "name": "The Powerpuff Girls Movie",
+    "type": "movie",
+    "year": "2002",
+    "poster": "https://image.tmdb.org/t/p/w500/yAFalW8UtdJg1z1gPjXx8C1sXZq.jpg",
+    "description": "After destroying the city of Townsville in a game of tag, a trio of superpowered little girls must redeem themselves by stopping a vengeful monkey's plot for world domination."
+   }
   }
  }
 }

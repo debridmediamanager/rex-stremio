@@ -61,6 +61,9 @@ DEFAULTS = {
 
 # Series' seasons and episodes come from Cinemeta, whose ids are IMDb's.
 CINEMETA = "https://v3-cinemeta.strem.io"
+# A catalog that lists TMDB ids (`tmdb:…`: Cartoon Network, Nickelodeon, Sitcom Catalogs...) names
+# no IMDb id; when no added addon's meta does, the TMDB addon's does (2026-10-24).
+TMDB_META = "https://tmdb.elfhosted.com"
 
 # ffprobe's container -> the extension rex takes the file by (an HLS playlist is `.m3u8`).
 CONTAINERS = {"hls": "m3u8", "matroska,webm": "mkv", "mov,mp4,m4a,3gp,3g2,mj2": "mp4", "mpegts": "ts", "avi": "avi"}
@@ -661,6 +664,29 @@ class Sync:
                 self.cache[vid] = value
                 self.via[vid] = headers or {}
 
+    def imdb_of(self, kind, sid, config, version):
+        """The IMDb id of a catalog item known by another id, as a meta addon names it: an added
+        addon that serves meta for it, else the TMDB addon for a `tmdb:` id. Kept once found."""
+        def ask():
+            bases = [addon_base(addon["url"]) for addon in config["addons"]
+                     if isinstance(addon, dict) and isinstance(addon.get("url"), str) and serves(addon_manifest(addon), "meta", kind, sid)]
+            if sid.startswith("tmdb:"):
+                bases.append(TMDB_META)
+            for base in bases:
+                try:
+                    found = get_json("%s/meta/%s/%s.json" % (base, kind, urllib.parse.quote(sid)), 30).get("meta") or {}
+                except Exception as error:
+                    LOG.info("%s: %s: %s", sid, safe_url(base), safe_error(error))
+                    continue
+                imdb = str(found.get("imdb_id") or "") if isinstance(found, dict) else ""
+                if re.fullmatch(r"tt\d+", imdb):
+                    return {"imdb": imdb}
+            raise LookupError("no meta addon names an IMDb id")
+        try:
+            return self.cached("ids", re.sub(r"[^A-Za-z0-9_-]", "-", "%s-%s" % (kind, sid)), ask, config, version)["imdb"]
+        except Exception:
+            return ""
+
     def refuse(self, vid, config, version):
         """Set aside for a day the stream an item is pinned to, and what was learned from it.
         False when nothing is pinned (no stream opened at all)."""
@@ -874,6 +900,8 @@ class Sync:
                 wanted.append(("%s-%s" % (catalog["slug"], re.sub(r"[^A-Za-z0-9_-]", "-", meta["id"])), meta["id"], meta, None))
                 continue
             imdb = str(meta.get("imdb_id") or meta.get("id") or "").split(":")[0]
+            if not re.fullmatch(r"tt\d+", imdb) and isinstance(meta.get("id"), str):
+                imdb = self.imdb_of(kind, meta["id"], config, version)
             if not re.fullmatch(r"tt\d+", imdb):
                 # A non-IMDb row cannot be represented in rex. Keep the old row until a
                 # later complete catalog response tells us it is really gone.

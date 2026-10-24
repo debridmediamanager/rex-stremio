@@ -428,6 +428,25 @@ class Logic(unittest.TestCase):
         self.assertIsNone(rex_stremio.opens(comet[0]["url"]))
         self.assertEqual(rex_stremio.opens(base + "/video/a.mkv"), base + "/video/a.mkv")
 
+    def test_tmdb_catalog_items_are_named_by_their_imdb_ids(self):
+        host, base = addon_host()
+        self.addCleanup(stop_server, host)
+        tmdb = rex_stremio.TMDB_META
+        rex_stremio.TMDB_META = base + "/tmdb"
+        self.addCleanup(setattr, rex_stremio, "TMDB_META", tmdb)
+        work = tempfile.mkdtemp(prefix="rex-stremio-")
+        config = rex_stremio.load_config(config_file(self, {"cache": work, "addons": [addon(base, "cartoon")], "catalogs": [
+            {"url": base + "/cartoon/catalog/movie/cartoon_network_movie.json", "title": "Cartoon Network"}]}))
+        sync = rex_stremio.Sync(config)
+        probe = read_json(os.path.join(FIXTURES, "probe-top-films-tt6262770.json"))
+        with unittest.mock.patch.object(rex_stremio.Sync, "probe", lambda *args: probe):
+            items = sync.catalog_items(config["catalogs"][0])
+        # The addon's own meta names no IMDb id; the TMDB addon's does.
+        self.assertEqual([(item["id"], item["ids"]) for item in items],
+                         [("st-cartoon-network-tt10515852", {"imdb": "tt10515852"}), ("st-cartoon-network-tt0289408", {"imdb": "tt0289408"})])
+        self.assertEqual(read_json(sync.path("info", "cartoon-network-tt10515852"))["sid"], "tt10515852")
+        self.assertEqual(read_json(sync.path("ids", "movie-tmdb-537061")), {"imdb": "tt10515852"})
+
     def test_stremio_item(self):
         config = rex_stremio.load_config(config_file(self, {"catalogs": [
             {"url": "https://h/catalog/series/top.json", "title": "Top shows"},
