@@ -417,11 +417,17 @@ class Resolve(unittest.TestCase):
         self.assertEqual(self.opened, [TORRENTIO[1]["url"]])
 
     def test_pinned_gone_falls_back(self):
+        with open(self.sync.path("probes", "carrie-1-2"), "w") as handle:
+            json.dump({"format": {}}, handle)
         with open(self.sync.path("info", "carrie-1-2"), "w") as handle:
             json.dump({"kind": "series", "sid": "tt11540908:1:2", "stream": rex_stremio.stream_key(TORRENTIO[2])}, handle)
         with unittest.mock.patch.object(rex_stremio, "opens", self.opens({TORRENTIO[2]["url"]})):
             self.assertEqual(self.sync.resolve("carrie-1-2"), TORRENTIO[0]["url"] + "#final")
         self.assertEqual(self.opened, [TORRENTIO[2]["url"], TORRENTIO[0]["url"]])
+        # What plays now is pinned and probed again on a sync started at once, so rex learns it.
+        self.assertEqual(read_json(self.sync.path("info", "carrie-1-2"))["stream"], rex_stremio.stream_key(TORRENTIO[0]))
+        self.assertFalse(os.path.exists(self.sync.path("probes", "carrie-1-2")))
+        self.assertTrue(self.sync.wake.is_set())
 
     def test_nothing_opens(self):
         with unittest.mock.patch.object(rex_stremio, "opens", self.opens({s["url"] for s in TORRENTIO})):

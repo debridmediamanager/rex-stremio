@@ -719,9 +719,13 @@ class Sync:
                 if not info.get("stream"):  # the first one that opens is what the probe describes
                     self.cache_update(self.path("info", vid, config, version), {"stream": stream_key(stream)}, version)
                 elif stream_key(stream) != info["stream"]:
-                    # ponytail: a fallback stream can differ from the probe rex holds (codec,
-                    # container); delete cache/probes/<id>.json to re-probe if one will not play.
+                    # The stream rex was told about is gone, and this one can differ (codec,
+                    # container, a live channel's other mirror and its stream layout), so this
+                    # play may fail. It is pinned, probed and pushed again on a sync started now.
                     LOG.warning("%s: probed stream gone, playing %s", vid, safe_stream_key(stream_key(stream)))
+                    self.cache_update(self.path("info", vid, config, version), {"stream": stream_key(stream)}, version)
+                    self.cache_remove(self.path("probes", vid, config, version), version)
+                    self.wake.set()
                 self.store_cache(version, vid, (url, max(time.time(), min(expiry(stream["url"]), expiry(url)) - 3600)))
                 return url
             raise RuntimeError("no stream addon has a stream that opens")

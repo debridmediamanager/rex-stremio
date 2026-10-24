@@ -109,8 +109,8 @@ The page writes `config.json` (mode 600). You can also edit it yourself and rest
   a collision-free identity. Editing a library name updates its placement; an explicitly chosen
   directory remains a manual override.
 - rex knows each title by the stream it was first checked with. If that link stops opening and
-  another stream plays instead, it can differ (another codec or container) and fail to play.
-  Delete the title's file in `cache/probes/` and it is checked again on the next sync.
+  another stream plays instead, it can differ (another codec or container) and that play can
+  fail; rex-stremio then checks the new stream and tells rex at once, so the next play works.
 - Catalogs that need a question first (a search, a genre) are not listed.
 - Anyone who can reach `listen` can play through the relay. Keep it on `127.0.0.1` unless rex
   runs elsewhere. The settings page answers only this machine, your home network and Tailscale.
