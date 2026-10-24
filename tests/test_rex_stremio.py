@@ -114,6 +114,14 @@ def addon_host():
                 self.end_headers()
                 self.wfile.write(raw[first:last + 1])
                 return
+            if path.startswith("/tiny/"):  # an error body served as a file
+                self.send_response(206)
+                self.send_header("Content-Type", "video/x-matroska")
+                self.send_header("Content-Range", "bytes 0-0/150")
+                self.send_header("Content-Length", "1")
+                self.end_headers()
+                self.wfile.write(b"x")
+                return
             if path.startswith("/whole/"):  # Google's video-downloads: no Range, all of the file
                 self.send_response(200)
                 self.send_header("Content-Type", "video/mkv")
@@ -464,6 +472,7 @@ class Logic(unittest.TestCase):
         self.assertEqual(rex_stremio.opens(base + "/video/a.mkv"), base + "/video/a.mkv")
         # A file that answers a Range with all of itself (Google's video-downloads) cannot be seeked.
         self.assertIsNone(rex_stremio.opens(base + "/whole/breaking-bad-s01e01.mkv"))
+        self.assertIsNone(rex_stremio.opens(base + "/tiny/shawshank.mkv"))  # 150 bytes, as Hydra's was
 
     def test_tmdb_catalog_items_are_named_by_their_imdb_ids(self):
         host, base = addon_host()
