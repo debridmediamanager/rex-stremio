@@ -1425,7 +1425,7 @@ class App:
                 if headers:
                     self.relay(vid, url, headers)
                     return
-                master = self.trimmed(url) if urllib.parse.urlsplit(url).path.endswith(".m3u8") else None
+                master = self.trimmed(url, self.headers.get("User-Agent")) if urllib.parse.urlsplit(url).path.endswith(".m3u8") else None
                 if master:
                     self.send_response(200)
                     self.send_header("Content-Type", "application/vnd.apple.mpegurl")
@@ -1441,10 +1441,12 @@ class App:
 
             do_HEAD = do_GET
 
-            def trimmed(self, url):
-                """An HLS master's best variant alone (`one_variant`), or None to send rex to it."""
+            def trimmed(self, url, agent):
+                """An HLS master's best variant alone (`one_variant`), or None to send rex to it.
+                Asked as the player asks: ABC's Akamai links name a variant only the User-Agent
+                that fetched the master may read (403 for any other, 2026-10-24)."""
                 try:
-                    request = urllib.request.Request(url, headers={"User-Agent": "rex-stremio"})
+                    request = urllib.request.Request(url, headers={"User-Agent": agent or "rex-stremio"})
                     with urllib.request.urlopen(request, timeout=30) as response:
                         text = response.read(MAX_JSON_BYTES).decode("utf-8", "replace")
                         final = response.geturl()

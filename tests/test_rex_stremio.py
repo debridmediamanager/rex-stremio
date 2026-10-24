@@ -121,6 +121,22 @@ def addon_host():
                 self.end_headers()
                 self.wfile.write(MP4)
                 return
+            if path.startswith("/akamai/"):  # a master whose variants answer only its own User-Agent
+                agent = urllib.parse.quote(self.headers.get("User-Agent") or "", safe="")
+                if path.endswith("master.m3u8"):
+                    raw = ("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=640x360\nlow.m3u8?ua=%s\n"
+                           "#EXT-X-STREAM-INF:BANDWIDTH=3600000,RESOLUTION=1280x720\nhigh.m3u8?ua=%s\n" % (agent, agent)).encode()
+                elif urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("ua", [""])[0] == urllib.parse.unquote(agent):
+                    raw = b"#EXTM3U\n#EXTINF:4,\nseg0.ts\n#EXT-X-ENDLIST\n"
+                else:
+                    self.send_error(403)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-mpegURL")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+                return
             if path.startswith("/video/") and path.endswith(".m3u8"):  # usatv's ABC's master
                 with open(os.path.join(FIXTURES, "hls-master-usatv-abc.m3u8"), "rb") as handle:
                     raw = handle.read()
@@ -1072,6 +1088,18 @@ class Relay(unittest.TestCase):
         self.assertEqual((status, len(variants)), (200, 1))
         self.assertIn("RESOLUTION=1280x720,BANDWIDTH=6617500", variants[0])
         self.assertTrue(body.decode().rstrip().endswith("https://content-aeuc1-up-1.uplynk.com/channel/39919d3f7a074eefa8bf579214e952f9/e.m3u8?pbs=PBS"))
+
+    def test_a_trimmed_master_is_asked_for_as_the_player_asks(self):
+        stream = dict(USATV[0], url=self.base + "/akamai/master.m3u8")
+        with open(self.info, "w") as handle:
+            json.dump({"kind": "tv", "sid": "ustv-abc", "stream": rex_stremio.stream_key(stream)}, handle)
+        with unittest.mock.patch.object(rex_stremio.Sync, "streams", lambda *args, **kwargs: [stream]):
+            body = self.get("/stremio-films/films/films-tt0111161.stream", **{"User-Agent": "Lavf/61.7.100"})[1].decode()
+        variant = body.rstrip().splitlines()[-1]
+        self.assertIn("/akamai/high.m3u8", variant)
+        request = urllib.request.Request(variant, headers={"User-Agent": "Lavf/61.7.100"})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            self.assertEqual(response.status, 200)
 
     def test_a_placeholder_clip_gives_way_to_the_next(self):
         self.pin("/eclipsia/stream/movie/tt0111161.json", 0)
