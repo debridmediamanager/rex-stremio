@@ -8,7 +8,8 @@ play, rex-stremio asks your stream addons for a link, as Stremio does, and rex p
   any addon (Cinemeta, your DMM Cast list), streams from every addon that has them.
 - **Plex names everything.** Each film and episode goes to rex with its IMDb id, so Plex apps
   show the usual titles, posters and summaries. The catalog's own title and poster show until
-  rex is claimed.
+  rex is claimed. A catalog of TMDB ids is named through a meta addon (the TMDB addon by
+  default); one an addon alone knows (One Pace, a site's own list) keeps the addon's names.
 - **Live TV too.** A live TV addon's channels become a Live TV library, named and pictured by
   the addon, and play live.
 - **You choose the quality.** The highest resolution within your limits plays (a size cap too).
@@ -98,6 +99,10 @@ The page writes `config.json` (mode 600). You can also edit it yourself and rest
 - Episodes come from Cinemeta and use its season and episode numbers. For a few shows these are
   not TMDB's, which rex follows, so an episode can land in the wrong place.
 - A series catalog's **How many** counts episodes, not shows.
+- Catalogs of types other than films, series and channels (an addon's `anime`, `channel`) are
+  not listed.
+- Links that need headers (an addon's `proxyHeaders`) play through rex-stremio, which then carries
+  their bytes; a link that is a web page is skipped, and one rex cannot play is set aside for a day.
 - A live channel cannot be paused far back, resumed later or marked watched, and plays only in
   apps that ask rex for a conversion (Plex apps, Plezy; Plex Web is not tested). Channels the addon
   gives no working stream for, and DRM-protected ones, are left out.

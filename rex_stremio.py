@@ -508,11 +508,11 @@ def stremio_item(config, catalog, vid, imdb, meta, video, probe, extension):
         "id": "st-" + vid,
         "path": path,
         "file": "%s/%s" % (config["mount"].rstrip("/"), path),
-        "name": meta.get("name") or imdb,
-        "release": "stremio:" + imdb,
+        "name": meta.get("name") or imdb or str(meta.get("id")),
+        "release": "stremio:%s" % (imdb or meta.get("id")),
         "media_info": probe,
     }
-    if catalog["type"] != "tv":
+    if catalog["type"] != "tv" and imdb:
         pushed["ids"] = {"imdb": imdb}
     size = (probe.get("format") or {}).get("size")
     try:
@@ -687,6 +687,21 @@ class Sync:
         except Exception:
             return ""
 
+    def own_meta(self, kind, sid, config):
+        """A series only its addon knows, with its episodes (`videos`), from an addon that serves
+        meta for its id."""
+        for addon in config["addons"]:
+            if not (isinstance(addon, dict) and isinstance(addon.get("url"), str) and serves(addon_manifest(addon), "meta", kind, sid)):
+                continue
+            try:
+                found = get_json("%s/meta/%s/%s.json" % (addon_base(addon["url"]), kind, urllib.parse.quote(sid)), 60).get("meta")
+            except Exception as error:
+                LOG.warning("%s: %s", sid, safe_error(error))
+                continue
+            if isinstance(found, dict) and isinstance(found.get("videos"), list) and found["videos"]:
+                return found
+        return None
+
     def refuse(self, vid, config, version):
         """Set aside for a day the stream an item is pinned to, and what was learned from it.
         False when nothing is pinned (no stream opened at all)."""
@@ -760,14 +775,20 @@ class Sync:
                 continue
             LOG.warning("rex ignored %s: %s", safe_error(ignored.get("entry")), safe_error(ignored.get("reason")))
 
-    def streams(self, kind, sid, config=None):
-        """Every stream the addons that serve this item give, in the addons' order."""
+    def streams(self, kind, sid, config=None, also=()):
+        """Every stream the addons that serve this item give, in the addons' order. Each addon is
+        asked by the id it serves: its catalog's own id (`also`) first, as Stremio asks by the id
+        a catalog gave, else the item's IMDb id."""
         config = self.config if config is None else config
-        addons = [addon for addon in config["addons"]
-                  if isinstance(addon, dict) and isinstance(addon.get("url"), str)
-                  and serves(addon_manifest(addon), "stream", kind, sid)]
+        addons = []
+        for addon in config["addons"]:
+            if isinstance(addon, dict) and isinstance(addon.get("url"), str):
+                named = next((one for one in [*also, sid] if serves(addon_manifest(addon), "stream", kind, one)), None)
+                if named:
+                    addons.append((addon, named))
 
-        def ask(addon):
+        def ask(pair):
+            addon, sid = pair
             manifest = addon_manifest(addon)
             try:
                 answer = get_json("%s/stream/%s/%s.json" % (addon_base(addon["url"]), kind, urllib.parse.quote(sid)), 30)
@@ -804,7 +825,7 @@ class Sync:
                 info = json.load(handle)
             refused = {entry.get("key") for entry in info.get("refused") or []
                        if isinstance(entry, dict) and time.time() - entry.get("at", 0) < 86400}
-            for stream in ranked(self.streams(info["kind"], info["sid"], config), config, info.get("stream")):
+            for stream in ranked(self.streams(info["kind"], info["sid"], config, info.get("also") or ()), config, info.get("stream")):
                 if stream_key(stream) in refused:
                     continue
                 url = opens(stream["url"], request_headers(stream))
@@ -837,9 +858,10 @@ class Sync:
                         if catalog["directory"] == directory and catalog["slug"] == catalog_slug), None)
         if not catalog:
             return None
-        suffix = vid[len(catalog_slug) + 1:] if vid.startswith(catalog_slug + "-") else ""
-        pattern = {"movie": r"tt\d+", "series": r"tt\d+-\d+-\d+", "tv": r"[A-Za-z0-9_-]+"}[catalog["type"]]
-        if not re.fullmatch(pattern, suffix):
+        # An item id is its catalog's slug and the item's (an IMDb id, or an addon's own): the
+        # longest slug it starts with is its catalog's (`cat-2-tt1` is cat-2's, not cat's).
+        owner = max((other["slug"] for other in catalogs if vid.startswith(other["slug"] + "-")), key=len, default=None)
+        if owner != catalog_slug or len(vid) <= len(catalog_slug) + 1:
             return None
         info_path = os.path.join(cache, "info", vid + ".json")
         if not os.path.isfile(info_path):
@@ -897,29 +919,43 @@ class Sync:
                 if not isinstance(meta.get("id"), str) or not meta["id"]:
                     complete = False
                     continue
-                wanted.append(("%s-%s" % (catalog["slug"], re.sub(r"[^A-Za-z0-9_-]", "-", meta["id"])), meta["id"], meta, None))
+                wanted.append(("%s-%s" % (catalog["slug"], re.sub(r"[^A-Za-z0-9_-]", "-", meta["id"])), meta["id"], meta, None, (), None))
                 continue
-            imdb = str(meta.get("imdb_id") or meta.get("id") or "").split(":")[0]
-            if not re.fullmatch(r"tt\d+", imdb) and isinstance(meta.get("id"), str):
-                imdb = self.imdb_of(kind, meta["id"], config, version)
+            own = meta["id"] if isinstance(meta.get("id"), str) else ""
+            imdb = str(meta.get("imdb_id") or "")
             if not re.fullmatch(r"tt\d+", imdb):
-                # A non-IMDb row cannot be represented in rex. Keep the old row until a
-                # later complete catalog response tells us it is really gone.
+                # An addon's own id can carry it (Cotonet's `cotonet:tt28942997`).
+                found = re.search(r"(?<![A-Za-z0-9])tt\d{5,}(?!\d)", own)
+                imdb = found[0] if found else (self.imdb_of(kind, own, config, version) if own else "")
+            if not imdb and not own:
                 complete = False
-                continue  # rex identifies by IMDb id; a catalog's own ids name nothing to it
+                continue
             # Ids carry the catalog: one film in two catalogs is two items.
-            if kind == "movie":
-                wanted.append(("%s-%s" % (catalog["slug"], imdb), imdb, meta, None))
+            if not imdb:
+                # Only the addon knows it (One Pace, Sosac, Bamabin): it goes to rex named by the
+                # catalog (`display`), and plays from the addons that serve its own id.
+                label = re.sub(r"[^A-Za-z0-9_-]", "-", own)
+                if kind == "movie":
+                    wanted.append(("%s-%s" % (catalog["slug"], label), own, meta, None, (), None))
+                    continue
+                full = self.own_meta(kind, own, config)
+                if not full:
+                    complete = False
+                    continue
+            elif kind == "movie":
+                wanted.append(("%s-%s" % (catalog["slug"], imdb), imdb, meta, None, (own,) if own and own != imdb else (), imdb))
                 continue
-            try:
-                response = get_json("%s/meta/series/%s.json" % (CINEMETA, imdb))
-                full = response.get("meta") if isinstance(response, dict) else None
-                if not isinstance(full, dict):
-                    raise ValueError("series response has no meta")
-            except Exception as error:
-                complete = False
-                LOG.warning("%s: %s", imdb, safe_error(error))
-                continue
+            else:
+                label = imdb
+                try:
+                    response = get_json("%s/meta/series/%s.json" % (CINEMETA, imdb))
+                    full = response.get("meta") if isinstance(response, dict) else None
+                    if not isinstance(full, dict):
+                        raise ValueError("series response has no meta")
+                except Exception as error:
+                    complete = False
+                    LOG.warning("%s: %s", imdb, safe_error(error))
+                    continue
             raw_videos = full.get("videos")
             if not isinstance(raw_videos, list) or not raw_videos:
                 complete = False
@@ -940,12 +976,16 @@ class Sync:
                 episodes.append(dict(raw_video, season=season, episode=episode))
             episodes.sort(key=lambda video: (video["season"], video["episode"]))
             for video in episodes[:limit - len(wanted)]:
-                wanted.append(("%s-%s-%d-%d" % (catalog["slug"], imdb, video["season"], video["episode"]),
-                               "%s:%d:%d" % (imdb, video["season"], video["episode"]), dict(full, **meta), video))
+                vid = "%s-%s-%d-%d" % (catalog["slug"], label, video["season"], video["episode"])
+                if imdb:
+                    also = ("%s:%d:%d" % (own, video["season"], video["episode"]),) if own and own != imdb else ()
+                    wanted.append((vid, "%s:%d:%d" % (imdb, video["season"], video["episode"]), dict(full, **meta), video, also, imdb))
+                elif isinstance(video.get("id"), str) and video["id"]:
+                    wanted.append((vid, video["id"], dict(full, **meta), video, (), None))
         items = []
-        for vid, sid, meta, video in wanted:
+        for vid, sid, meta, video, also, imdb in wanted:
             info_path = self.path("info", vid, config, version)
-            expected_info = {"kind": kind, "sid": sid}
+            expected_info = dict({"kind": kind, "sid": sid}, **({"also": list(also)} if also else {}))
             try:
                 info = self.cached("info", vid, lambda: expected_info, config, version)
             except Exception as error:
@@ -957,6 +997,8 @@ class Sync:
                 self.cache_write(info_path, info, version)
                 self.cache_remove(self.path("probes", vid, config, version), version)
             info_valid = isinstance(info, dict) and info.get("kind") == kind and info.get("sid") == sid
+            if info_valid and (info.get("also") or []) != list(also):
+                self.cache_update(info_path, {"also": list(also)}, version)
             if not info_valid:
                 # Repair identity before probing. A stale identity means the derived probe belongs
                 # to a different source item and must not be reused for this one.
@@ -1009,7 +1051,7 @@ class Sync:
                     complete = False
                     continue
             try:
-                items.append(stremio_item(config, catalog, vid, sid if kind == "tv" else sid.split(":")[0], meta, video, probe, extension))
+                items.append(stremio_item(config, catalog, vid, sid if kind == "tv" else imdb, meta, video, probe, extension))
             except Exception as error:
                 complete = False
                 LOG.warning("%s: %s", vid, safe_error(error))

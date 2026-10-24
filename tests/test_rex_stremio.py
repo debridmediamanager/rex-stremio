@@ -447,6 +447,32 @@ class Logic(unittest.TestCase):
         self.assertEqual(read_json(sync.path("info", "cartoon-network-tt10515852"))["sid"], "tt10515852")
         self.assertEqual(read_json(sync.path("ids", "movie-tmdb-537061")), {"imdb": "tt10515852"})
 
+    def test_catalogs_of_an_addons_own_ids(self):
+        host, base = addon_host()
+        self.addCleanup(stop_server, host)
+        work = tempfile.mkdtemp(prefix="rex-stremio-")
+        config = rex_stremio.load_config(config_file(self, {"cache": work, "addons": [addon(base, "onepace"), addon(base, "cotonet")], "catalogs": [
+            {"url": base + "/cotonet/catalog/movie/cotonet_recentes.json", "title": "Cotonet", "limit": 1},
+            {"url": base + "/onepace/catalog/series/one-pace-complete.json", "title": "One Pace", "limit": 2}]}))
+        sync = rex_stremio.Sync(config)
+        probe = read_json(os.path.join(FIXTURES, "probe-top-films-tt6262770.json"))
+        with unittest.mock.patch.object(rex_stremio.Sync, "probe", lambda *args: probe):
+            films = sync.catalog_items(config["catalogs"][0])
+            episodes = sync.catalog_items(config["catalogs"][1])
+        # Cotonet's id carries an IMDb id: Plex names the film, Cotonet is asked by its own id.
+        self.assertEqual([(item["id"], item["ids"]) for item in films], [("st-cotonet-tt28942997", {"imdb": "tt28942997"})])
+        self.assertEqual(read_json(sync.path("info", "cotonet-tt28942997"))["also"], ["cotonet:tt28942997"])
+        with unittest.mock.patch.object(rex_stremio, "opens", lambda url, headers=None: url):
+            self.assertEqual(sync.resolve("cotonet-tt28942997"), base + "/video/cotonet-0.mkv")
+        # One Pace is known to its addon alone: its episodes, numbered by its meta, named by it.
+        self.assertEqual([(item["kind"], item["season"], item["episode"], item.get("ids"), item["release"]) for item in episodes],
+                         [("episode", 1, 1, None, "stremio:onepace_complete_series"), ("episode", 1, 2, None, "stremio:onepace_complete_series")])
+        self.assertEqual(episodes[0]["display"]["show"]["title"], "One Pace")
+        self.assertEqual(episodes[0]["display"]["title"], "Romance Dawn - Episodio 1")
+        self.assertEqual(sync.route_vid("/stremio-shows/one-pace/one-pace-onepace_complete_series-1-1.m3u8"), "one-pace-onepace_complete_series-1-1")
+        with unittest.mock.patch.object(rex_stremio, "opens", lambda url, headers=None: url):
+            self.assertEqual(sync.resolve("one-pace-onepace_complete_series-1-1"), base + "/video/onepace-0.mkv")
+
     def test_stremio_item(self):
         config = rex_stremio.load_config(config_file(self, {"catalogs": [
             {"url": "https://h/catalog/series/top.json", "title": "Top shows"},

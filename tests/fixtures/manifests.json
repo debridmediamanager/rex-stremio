@@ -1,5 +1,5 @@
 {
- "_provenance": "Stremio addons' real manifests, captured 2026-10-24: Cinemeta, Torrentio and DMM Cast (with a made-up Cast id; the manifest is the same for every account) as their hosts answered; httpx's as its source (src/server.ts) defines it. Public Domain Movies' was not captured: it is left out, as an addon nobody added. USA TV Next's (live TV), 2026-10-24. PenguPlay's, configured with its Live TV source (the configuration is in the URL, not the manifest), 2026-10-24. Hyper's and Eclipsia's, 2026-10-24. Cartoon Network's, 2026-10-24.",
+ "_provenance": "Stremio addons' real manifests, captured 2026-10-24: Cinemeta, Torrentio and DMM Cast (with a made-up Cast id; the manifest is the same for every account) as their hosts answered; httpx's as its source (src/server.ts) defines it. Public Domain Movies' was not captured: it is left out, as an addon nobody added. USA TV Next's (live TV), 2026-10-24. PenguPlay's, configured with its Live TV source (the configuration is in the URL, not the manifest), 2026-10-24. Hyper's and Eclipsia's, 2026-10-24. Cartoon Network's, 2026-10-24. One Pace's and Cotonet's, 2026-10-24.",
  "routes": {
   "/cinemeta/manifest.json": {
    "id": "com.linvo.cinemeta",
@@ -1621,6 +1621,178 @@
     "issuer": "https://stremio-addons.net",
     "signature": "eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..OCazw3GP0SIkE3Htmo9H1w.3p6AhQCXb8-sIxbD4sSmMbW-aCkIvNDEduDB6rViiDBiGOuHYGMMG8G6JByATbBkMXziLlttduL3qTrDWZB4FyUYZ84p-8pL8gRKkHdqOn_z58OUz0WSRMts-XrO58_K.SFb81L0ZYkbQVSj5iNOByQ"
    }
+  },
+  "/onepace/manifest.json": {
+   "id": "one-pace-unified",
+   "version": "2.3.1",
+   "name": "One Pace - Complete Series",
+   "description": "Complete One Pace series with all arcs as seasons. Includes Spanish and English subtitles/dubbing.",
+   "resources": [
+    "catalog",
+    "meta",
+    "stream"
+   ],
+   "types": [
+    "series"
+   ],
+   "catalogs": [
+    {
+     "type": "series",
+     "id": "one-pace-complete",
+     "name": "One Pace Complete",
+     "extra": [
+      {
+       "name": "genre",
+       "options": [
+        "Animation",
+        "Adventure",
+        "Comedy",
+        "Drama"
+       ]
+      }
+     ]
+    }
+   ],
+   "idPrefixes": [
+    "onepace_"
+   ]
+  },
+  "/cotonet/manifest.json": {
+   "id": "org.cotonet.addon",
+   "version": "7.4.0",
+   "name": "Cotonet",
+   "description": "Filmes e s\u00e9ries em portugu\u00eas de Portugal. Para mais informa\u00e7\u00e3o: https://t.me/CotonetStremio",
+   "logo": "https://www.streamvaultpro.cc/0:/dl/6a1473359e408758c495c75b",
+   "resources": [
+    "catalog",
+    "meta",
+    "stream"
+   ],
+   "types": [
+    "movie",
+    "series"
+   ],
+   "catalogs": [
+    {
+     "type": "movie",
+     "id": "cotonet_todos",
+     "name": "Cotonet \u2014 Todos",
+     "extraSupported": [
+      "search",
+      "genre"
+     ],
+     "extra": [
+      {
+       "name": "search",
+       "isRequired": false
+      },
+      {
+       "name": "genre",
+       "isRequired": false,
+       "options": [
+        "A\u00e7\u00e3o",
+        "Anima\u00e7\u00e3o",
+        "Aventura",
+        "Com\u00e9dia",
+        "Crime",
+        "Document\u00e1rio",
+        "Drama",
+        "Fantasia",
+        "Fic\u00e7\u00e3o cient\u00edfica",
+        "Guerra",
+        "Hist\u00f3ria",
+        "Mist\u00e9rio",
+        "Musical",
+        "Romance",
+        "Terror",
+        "Thriller",
+        "Western"
+       ]
+      }
+     ]
+    },
+    {
+     "type": "movie",
+     "id": "cotonet_alfabetico",
+     "name": "Cotonet \u2014 A-Z"
+    },
+    {
+     "type": "movie",
+     "id": "cotonet_recentes",
+     "name": "Cotonet \u2014 Mais Recentes"
+    },
+    {
+     "type": "movie",
+     "id": "cotonet_antigos",
+     "name": "Cotonet \u2014 Mais Antigos"
+    },
+    {
+     "type": "movie",
+     "id": "cotonet_avaliacao",
+     "name": "Cotonet \u2014 Melhor Avalia\u00e7\u00e3o"
+    },
+    {
+     "type": "series",
+     "id": "cotonet_series_todas",
+     "name": "Cotonet S\u00e9ries \u2014 Todas",
+     "extraSupported": [
+      "search",
+      "genre"
+     ],
+     "extra": [
+      {
+       "name": "search",
+       "isRequired": false
+      },
+      {
+       "name": "genre",
+       "isRequired": false,
+       "options": [
+        "A\u00e7\u00e3o e Aventura",
+        "Anima\u00e7\u00e3o",
+        "Com\u00e9dia",
+        "Crime",
+        "Document\u00e1rio",
+        "Drama",
+        "Fam\u00edlia",
+        "Kids",
+        "Mist\u00e9rio",
+        "Not\u00edcias",
+        "Reality",
+        "Sci-Fi e Fantasia",
+        "Soap",
+        "Talk",
+        "Guerra e Pol\u00edtica",
+        "Western"
+       ]
+      }
+     ]
+    },
+    {
+     "type": "series",
+     "id": "cotonet_series_alfabetico",
+     "name": "Cotonet S\u00e9ries \u2014 A-Z"
+    },
+    {
+     "type": "series",
+     "id": "cotonet_series_recentes",
+     "name": "Cotonet S\u00e9ries \u2014 Mais Recentes"
+    },
+    {
+     "type": "series",
+     "id": "cotonet_series_antigas",
+     "name": "Cotonet S\u00e9ries \u2014 Mais Antigas"
+    },
+    {
+     "type": "series",
+     "id": "cotonet_series_avaliacao",
+     "name": "Cotonet S\u00e9ries \u2014 Melhor Avalia\u00e7\u00e3o"
+    }
+   ],
+   "idPrefixes": [
+    "cotonet:",
+    "tt"
+   ]
   }
  }
 }

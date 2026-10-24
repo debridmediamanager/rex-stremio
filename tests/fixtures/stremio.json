@@ -1,5 +1,5 @@
 {
- "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams. USA TV Next's (a live TV addon, 2026-10-24) catalog for two channels, ABC (first 3 streams) and CW (no stream). PenguPlay's Live TV channels catalog (two channels), 2026-10-24. Comet's answer for an unconfigured install (2026-10-24): one 'stream' linking its web page (comet.feels.legal, text/html), served here from /page/. Hyper's and Eclipsia's answers for The Shawshank Redemption (2026-10-24), their links' hosts replaced by /hdr/ on the fake host, which answers 429 without the stream's proxyHeaders as the real ones did; their proxyHeaders kept. Cartoon Network's films catalog (first 2, TMDB ids), its own meta answers (no IMDb id) and the TMDB addon's (tmdb.elfhosted.com, cut to a few fields) for them, 2026-10-24.",
+ "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams. USA TV Next's (a live TV addon, 2026-10-24) catalog for two channels, ABC (first 3 streams) and CW (no stream). PenguPlay's Live TV channels catalog (two channels), 2026-10-24. Comet's answer for an unconfigured install (2026-10-24): one 'stream' linking its web page (comet.feels.legal, text/html), served here from /page/. Hyper's and Eclipsia's answers for The Shawshank Redemption (2026-10-24), their links' hosts replaced by /hdr/ on the fake host, which answers 429 without the stream's proxyHeaders as the real ones did; their proxyHeaders kept. Cartoon Network's films catalog (first 2, TMDB ids), its own meta answers (no IMDb id) and the TMDB addon's (tmdb.elfhosted.com, cut to a few fields) for them, 2026-10-24. One Pace's catalog, its meta (first 3 of 489 episodes, its own ids) and its streams for the first episode; Cotonet's newest films (first 2, ids cotonet:tt...) and its streams for the first; links replaced by /video/ on the fake host (2026-10-24).",
  "routes": {
   "/dmm/catalog/movie/casted-movies.json": {
    "metas": [
@@ -1299,6 +1299,223 @@
     "poster": "https://image.tmdb.org/t/p/w500/yAFalW8UtdJg1z1gPjXx8C1sXZq.jpg",
     "description": "After destroying the city of Townsville in a game of tag, a trio of superpowered little girls must redeem themselves by stopping a vengeful monkey's plot for world domination."
    }
+  },
+  "/onepace/catalog/series/one-pace-complete.json": {
+   "metas": [
+    {
+     "id": "onepace_complete_series",
+     "type": "series",
+     "name": "One Pace",
+     "poster": "https://image.tmdb.org/t/p/w500/cMD9Ygz11zjJzAovURpO75Qg7rT.jpg",
+     "background": "https://image.tmdb.org/t/p/original/cMD9Ygz11zjJzAovURpO75Qg7rT.jpg",
+     "genres": [
+      "Animation",
+      "Adventure",
+      "Comedy",
+      "Drama"
+     ],
+     "year": 2010,
+     "description": "One Pace is a fan project that recuts the One Piece anime in an endeavor to bring it more in line with the pacing of the original manga. The team accomplishes this by removing filler scenes not present in the source material."
+    }
+   ]
+  },
+  "/onepace/meta/series/onepace_complete_series.json": {
+   "meta": {
+    "id": "onepace_complete_series",
+    "type": "series",
+    "name": "One Pace",
+    "poster": "https://image.tmdb.org/t/p/w500/cMD9Ygz11zjJzAovURpO75Qg7rT.jpg",
+    "background": "https://image.tmdb.org/t/p/original/cMD9Ygz11zjJzAovURpO75Qg7rT.jpg",
+    "description": "One Pace is a fan project that recuts the One Piece anime in an endeavor to bring it more in line with the pacing of the original manga. The team accomplishes this by removing filler scenes not present in the source material.",
+    "genres": [
+     "Animation",
+     "Adventure",
+     "Comedy",
+     "Drama"
+    ],
+    "year": 2010,
+    "videos": [
+     {
+      "id": "onepace_s01e01",
+      "title": "Romance Dawn - Episodio 1",
+      "season": 1,
+      "episode": 1,
+      "overview": "Monkey D. Luffy parte en su aventura para formar su tripulaci\u00f3n, encontrar el legendario One Piece, y as\u00ed, ser el Rey de los Piratas.",
+      "thumbnail": "https://image.tmdb.org/t/p/w500/cMD9Ygz11zjJzAovURpO75Qg7rT.jpg"
+     },
+     {
+      "id": "onepace_s01e02",
+      "title": "Romance Dawn - Episodio 2",
+      "season": 1,
+      "episode": 2,
+      "overview": "Monkey D. Luffy parte en su aventura para formar su tripulaci\u00f3n, encontrar el legendario One Piece, y as\u00ed, ser el Rey de los Piratas.",
+      "thumbnail": "https://image.tmdb.org/t/p/w500/cMD9Ygz11zjJzAovURpO75Qg7rT.jpg"
+     },
+     {
+      "id": "onepace_s01e03",
+      "title": "Romance Dawn - Episodio 3",
+      "season": 1,
+      "episode": 3,
+      "overview": "Monkey D. Luffy parte en su aventura para formar su tripulaci\u00f3n, encontrar el legendario One Piece, y as\u00ed, ser el Rey de los Piratas.",
+      "thumbnail": "https://image.tmdb.org/t/p/w500/cMD9Ygz11zjJzAovURpO75Qg7rT.jpg"
+     }
+    ]
+   }
+  },
+  "/onepace/stream/series/onepace_s01e01.json": {
+   "streams": [
+    {
+     "title": "1080p - Doblaje Espa\u00f1ol",
+     "url": "{STREAMS}/video/onepace-0.mkv",
+     "quality": "1080p",
+     "language": "es"
+    },
+    {
+     "title": "720p - Doblaje Espa\u00f1ol",
+     "url": "{STREAMS}/video/onepace-1.mkv",
+     "quality": "720p",
+     "language": "es"
+    },
+    {
+     "title": "480p - Doblaje Espa\u00f1ol",
+     "url": "{STREAMS}/video/onepace-2.mkv",
+     "quality": "480p",
+     "language": "es"
+    },
+    {
+     "title": "1080p - Subt\u00edtulos Espa\u00f1ol",
+     "url": "{STREAMS}/video/onepace-3.mkv",
+     "quality": "1080p",
+     "language": "es"
+    },
+    {
+     "title": "720p - Subt\u00edtulos Espa\u00f1ol",
+     "url": "{STREAMS}/video/onepace-4.mkv",
+     "quality": "720p",
+     "language": "es"
+    },
+    {
+     "title": "480p - Subt\u00edtulos Espa\u00f1ol",
+     "url": "{STREAMS}/video/onepace-5.mkv",
+     "quality": "480p",
+     "language": "es"
+    },
+    {
+     "title": "1080p - Doblaje English",
+     "url": "{STREAMS}/video/onepace-6.mkv",
+     "quality": "1080p",
+     "language": "en"
+    },
+    {
+     "title": "720p - Doblaje English",
+     "url": "{STREAMS}/video/onepace-7.mkv",
+     "quality": "720p",
+     "language": "en"
+    },
+    {
+     "title": "480p - Doblaje English",
+     "url": "{STREAMS}/video/onepace-8.mkv",
+     "quality": "480p",
+     "language": "en"
+    },
+    {
+     "title": "1080p - Subt\u00edtulos English",
+     "url": "{STREAMS}/video/onepace-9.mkv",
+     "quality": "1080p",
+     "language": "en"
+    },
+    {
+     "title": "720p - Subt\u00edtulos English",
+     "url": "{STREAMS}/video/onepace-10.mkv",
+     "quality": "720p",
+     "language": "en"
+    },
+    {
+     "title": "480p - Subt\u00edtulos English",
+     "url": "{STREAMS}/video/onepace-11.mkv",
+     "quality": "480p",
+     "language": "en"
+    }
+   ]
+  },
+  "/cotonet/catalog/movie/cotonet_recentes.json": {
+   "metas": [
+    {
+     "id": "cotonet:tt28942997",
+     "type": "movie",
+     "name": "Mumbo Jumbo",
+     "description": "Quando o Mumbo Jumbo cresce magicamente at\u00e9 ficar gigante, ele parte numa viagem perigosa com os seus tr\u00eas amigos, para encontrar a assustadora bruxa Baba Yaga, que o pode tornar pequeno novamente. \u00c9 uma viagem cheia de aventuras que o far\u00e1 crescer, n\u00e3o por fora, mas por dentro.",
+     "poster": "https://image.tmdb.org/t/p/w500/jbsuLvHgy0VXM3YNJtGaC50435s.jpg",
+     "posterShape": "poster",
+     "background": "https://image.tmdb.org/t/p/w1280/xEM4grRNMP0TMHKbk3jnmbbLw4f.jpg",
+     "year": 2026,
+     "imdbRating": "6.2",
+     "genres": [
+      "Anima\u00e7\u00e3o",
+      "Aventura",
+      "Fam\u00edlia"
+     ],
+     "cast": [
+      "Victor Spanning",
+      "Annevig Schelde Ebbe",
+      "Kirsten Lehfeldt",
+      "Rebecca R\u00f8nde Kiilerich",
+      "Asger Reher",
+      "Peter Zhelder",
+      "Lars Mikkelsen",
+      "Cecilie Stenspil",
+      "Peter Fr\u00f6din",
+      "Dick Kays\u00f8"
+     ],
+     "director": [
+      "Karsten Kiilerich"
+     ]
+    },
+    {
+     "id": "cotonet:tt32890033",
+     "type": "movie",
+     "name": "M\u00ednimos & Monstros",
+     "description": "Acompanha os M\u00ednimos na Hollywood dos anos 20, enquanto procuram criaturas assustadoras para o seu filme de monstros, fazem parceria com uma criatura verde e t\u00eam de salvar o planeta depois de terem libertado os monstros.",
+     "poster": "https://image.tmdb.org/t/p/w500/AoaoPbO7434LeDB2EI11JJy7b9F.jpg",
+     "posterShape": "poster",
+     "background": "https://image.tmdb.org/t/p/w1280/kkcwhgSFd81QDlXo8ytrpHPQjhy.jpg",
+     "year": 2026,
+     "imdbRating": "7.6",
+     "genres": [
+      "Aventura",
+      "Anima\u00e7\u00e3o",
+      "Com\u00e9dia",
+      "Fam\u00edlia",
+      "Fantasia"
+     ],
+     "cast": [
+      "Pierre Coffin",
+      "Trey Parker",
+      "Christoph Waltz",
+      "Allison Janney",
+      "Jesse Eisenberg",
+      "Jeff Bridges",
+      "Zoey Deutch",
+      "Bobby Moynihan",
+      "Phil LaMarr",
+      "George Lucas"
+     ],
+     "director": [
+      "Pierre Coffin"
+     ]
+    }
+   ]
+  },
+  "/cotonet/stream/movie/cotonet:tt28942997.json": {
+   "streams": [
+    {
+     "url": "{STREAMS}/video/cotonet-0.mkv",
+     "title": "Op\u00e7\u00e3o 1",
+     "behaviorHints": {
+      "notWebReady": false
+     }
+    }
+   ]
   }
  }
 }
