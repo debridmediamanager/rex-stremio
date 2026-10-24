@@ -337,6 +337,11 @@ def opens(url, headers=None):
             if response.status == 200 and not playlist and int(response.headers.get("Content-Length") or 0) > 1:
                 LOG.info("%s: answers no Range, so it cannot be seeked", safe_url(url))
                 return None
+            # A "file" of a few bytes is an error body: one of Hydra's links was 150 bytes at play.
+            total = re.search(r"/(\d+)$", response.headers.get("Content-Range") or "")
+            if total and int(total[1]) < (1 << 20) and not playlist:
+                LOG.info("%s: %s bytes, not a video", safe_url(url), total[1])
+                return None
             return response.geturl() if response.status in (200, 206) else None
     except Exception as error:
         LOG.info("%s: %s", safe_url(url), safe_error(error))
@@ -1168,10 +1173,17 @@ def one_variant(text, base, cap=None):
         return None
     fitting = [variant for variant in variants if not cap or variant[2] <= int(cap)] or variants
     line, uri, _, _ = max(fitting, key=lambda variant: variant[2:])
-    groups = set(re.findall(r'(?:AUDIO|VIDEO|SUBTITLES|CLOSED-CAPTIONS)="([^"]+)"', line))
+    # One audio rendition (the default) and no subtitle playlists: rex maps tracks by the probe's
+    # indexes, and Pluto TV's masters list a different number of renditions per session, so a
+    # channel probed with four tracks before its picture played with fewer (2026-10-24).
+    line = re.sub(r',?SUBTITLES="[^"]*"', "", line)
+    groups = set(re.findall(r'(?:AUDIO|VIDEO|CLOSED-CAPTIONS)="([^"]+)"', line))
     kept = ["#EXTM3U"] + [other for other in lines if other.startswith(("#EXT-X-VERSION", "#EXT-X-INDEPENDENT-SEGMENTS"))]
-    kept += [other for other in lines if other.startswith("#EXT-X-MEDIA:")
-             and (re.search(r'GROUP-ID="([^"]+)"', other) or [None, None])[1] in groups]
+    renditions = [other for other in lines if other.startswith("#EXT-X-MEDIA:") and "TYPE=SUBTITLES" not in other
+                  and (re.search(r'GROUP-ID="([^"]+)"', other) or [None, None])[1] in groups]
+    audio = [other for other in renditions if "TYPE=AUDIO" in other]
+    chosen = next((other for other in audio if "DEFAULT=YES" in other), audio[0] if audio else None)
+    kept += [other for other in renditions if "TYPE=AUDIO" not in other or other is chosen]
     return rewrite_playlist("\n".join(kept + [line, uri]), base, lambda link: link)
 
 

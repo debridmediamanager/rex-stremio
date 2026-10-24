@@ -70,7 +70,7 @@ for _route, _answer in STREMIO.items():
             NEEDS[_stream["url"].split("/hdr/", 1)[1]] = {
                 name: value for name, value in (((_stream.get("behaviorHints") or {}).get("proxyHeaders") or {}).get("request") or {}).items()
                 if name.lower() != "accept-encoding"}
-MP4 = b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 4
+MP4 = b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 4097  # over 1 MB, as any video is
 
 
 def hdr_body(name):
@@ -147,7 +147,7 @@ def addon_host():
                 self.wfile.write(raw)
                 return
             if path.startswith(("/page/", "/video/")):  # a web page, and a video file
-                raw = b"<!doctype html><title>Comet</title>" if path.startswith("/page/") else b"\x1a\x45\xdf\xa3"
+                raw = b"<!doctype html><title>Comet</title>" if path.startswith("/page/") else b"\x1a\x45\xdf\xa3" + bytes(1 << 20)
                 ranged = path.startswith("/video/") and self.headers.get("Range") == "bytes=0-0"
                 self.send_response(206 if ranged else 200)
                 self.send_header("Content-Type", "text/html; charset=utf-8" if path.startswith("/page/") else "video/x-matroska")
@@ -525,6 +525,14 @@ class Logic(unittest.TestCase):
         self.assertNotIn("I-FRAME", one)
         self.assertIn("RESOLUTION=854x480", rex_stremio.one_variant(master, base, 480))
         self.assertIsNone(rex_stremio.one_variant("#EXTM3U\n#EXTINF:4,\nseg0.ts\n", base))
+        # Pluto TV's: five variants named by bandwidth alone, two audio renditions and subtitles.
+        with open(os.path.join(FIXTURES, "hls-master-pluto.m3u8")) as handle:
+            pluto = rex_stremio.one_variant(handle.read(), "https://cfd-v4-service-channel-stitcher-use1-1.prd.pluto.tv/v2/stitch/hls/channel/x/master.m3u8")
+        self.assertEqual([line for line in pluto.splitlines() if line.startswith("#EXT-X-STREAM-INF")],
+                         ['#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=3321280,AUDIO="audio"'])
+        self.assertEqual(len([line for line in pluto.splitlines() if "TYPE=AUDIO" in line and "DEFAULT=YES" in line]), 1)
+        self.assertNotIn("TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"en\",NAME=\"English\",", pluto)
+        self.assertNotIn("SUBTITLES", pluto)
 
     def test_stremio_item(self):
         config = rex_stremio.load_config(config_file(self, {"catalogs": [
@@ -759,7 +767,7 @@ class PartialSync(unittest.TestCase):
         vid = "%s-tt1234567" % catalog["slug"]
         with open(sync.path("info", vid), "w") as handle:
             json.dump(["corrupt"], handle)
-        probe = {"format": {"format_name": "matroska,webm", "size": "1"}}
+        probe = {"format": {"format_name": "matroska,webm", "size": "1"}, "streams": [{"codec_type": "video"}]}
         def probe_after_repair(*args):
             self.assertEqual(read_json(sync.path("info", vid))["sid"], "tt1234567")
             return probe
@@ -1117,7 +1125,7 @@ class Relay(unittest.TestCase):
     def test_a_stream_rex_cannot_take_gives_way_to_the_next(self):
         self.pin("/eclipsia/stream/movie/tt0111161.json", 0)
         probes = iter([{"format": {"format_name": "eac3"}, "streams": []},
-                       {"format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2"}, "streams": []}])
+                       {"format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2"}, "streams": [{"codec_type": "video"}]}])
         metas = {"metas": [{"id": "tt0111161", "type": "movie", "name": "The Shawshank Redemption"}]}
         with unittest.mock.patch.object(rex_stremio.Sync, "probe", lambda *args: next(probes)), \
                 unittest.mock.patch.object(rex_stremio, "get_json", lambda url, timeout=60: metas):
