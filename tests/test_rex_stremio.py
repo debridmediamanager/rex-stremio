@@ -1241,10 +1241,16 @@ class AgainstRex(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as answer:
             opener.open("http://127.0.0.1:%d/stremio-films/dmm-cast/dmm-cast-tt30144839.ts" % self.relay, timeout=30)
         self.assertEqual(answer.exception.headers["Location"], DMM[2]["url"])
-        # A channel plays its HD stream.
-        with self.assertRaises(urllib.error.HTTPError) as answer:
-            opener.open("http://127.0.0.1:%d/live-tv/usa-tv/usa-tv-%s.m3u8" % (self.relay, ABC), timeout=30)
-        self.assertEqual(answer.exception.headers["Location"], USATV[0]["url"])
+        # A channel plays its HD stream, its master as the best variant alone (the master as
+        # captured, not fetched: tests read no real host).
+        with open(os.path.join(FIXTURES, "hls-master-usatv-abc.m3u8")) as handle:
+            master = handle.read()
+        fetched = []
+        with unittest.mock.patch.object(rex_stremio, "fetch_text", lambda url, agent: fetched.append(url) or (master, url)):
+            with opener.open("http://127.0.0.1:%d/live-tv/usa-tv/usa-tv-%s.m3u8" % (self.relay, ABC), timeout=30) as answer:
+                body = answer.read().decode()
+        self.assertEqual(fetched, [USATV[0]["url"]])
+        self.assertEqual(len([line for line in body.splitlines() if line.startswith("#EXT-X-STREAM-INF")]), 1)
 
     def test_empty_catalog_keeps_existing_rows_and_upserts_healthy_addition(self):
         self.sync.once()

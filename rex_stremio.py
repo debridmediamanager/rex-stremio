@@ -1160,6 +1160,13 @@ class Sync:
             self.wake.clear()
 
 
+def fetch_text(url, agent):
+    """A playlist's text and the link it was read from, after redirects."""
+    request = urllib.request.Request(url, headers={"User-Agent": agent})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read(MAX_JSON_BYTES).decode("utf-8", "replace"), response.geturl()
+
+
 def one_variant(text, base, cap=None):
     """An HLS master as its best variant alone (the highest within `cap`, then the most bandwidth),
     with the renditions it names and every link absolute; None for a media playlist or a master
@@ -1463,10 +1470,7 @@ class App:
                 Asked as the player asks: ABC's Akamai links name a variant only the User-Agent
                 that fetched the master may read (403 for any other, 2026-10-24)."""
                 try:
-                    request = urllib.request.Request(url, headers={"User-Agent": agent or "rex-stremio"})
-                    with urllib.request.urlopen(request, timeout=30) as response:
-                        text = response.read(MAX_JSON_BYTES).decode("utf-8", "replace")
-                        final = response.geturl()
+                    text, final = fetch_text(url, agent or "rex-stremio")
                 except Exception as error:
                     LOG.info("%s: %s", safe_url(url), safe_error(error))
                     return None
