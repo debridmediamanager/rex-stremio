@@ -1,5 +1,5 @@
 {
- "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams. USA TV Next's (a live TV addon, 2026-10-24) catalog for two channels, ABC (first 3 streams) and CW (no stream). PenguPlay's Live TV channels catalog (two channels), 2026-10-24. Comet's answer for an unconfigured install (2026-10-24): one 'stream' linking its web page (comet.feels.legal, text/html), served here from /page/. Hyper's and Eclipsia's answers for The Shawshank Redemption (2026-10-24), their links' hosts replaced by /hdr/ on the fake host, which answers 429 without the stream's proxyHeaders as the real ones did; their proxyHeaders kept. Cartoon Network's films catalog (first 2, TMDB ids), its own meta answers (no IMDb id) and the TMDB addon's (tmdb.elfhosted.com, cut to a few fields) for them, 2026-10-24. One Pace's catalog, its meta (first 3 of 489 episodes, its own ids) and its streams for the first episode; Cotonet's newest films (first 2, ids cotonet:tt...) and its streams for the first; links replaced by /video/ on the fake host (2026-10-24).",
+ "_provenance": "Stremio addons' real answers, 2026-10-23: DMM Cast's casted films for a Real-Debrid test account (its Cast id written CASTID), Cinemeta's top films (first 2) and top series (first, with its first 3 episodes), httpx's streams for those films (its proxy links, which encode the player page, REDACTED), Torrentio's cached-RD streams for those episodes (first 3 each; the RD key written RDKEY), Public Domain Movies' catalog (first 3) and their torrent-only streams. USA TV Next's (a live TV addon, 2026-10-24) catalog for two channels, ABC (first 3 streams) and CW (no stream). PenguPlay's Live TV channels catalog (two channels), 2026-10-24. Comet's answer for an unconfigured install (2026-10-24): one 'stream' linking its web page (comet.feels.legal, text/html), served here from /page/. Hyper's and Eclipsia's answers for The Shawshank Redemption (2026-10-24), their links' hosts replaced by /hdr/ on the fake host, which answers 429 without the stream's proxyHeaders as the real ones did; their proxyHeaders kept. Cartoon Network's films catalog (first 2, TMDB ids), its own meta answers (no IMDb id) and the TMDB addon's (tmdb.elfhosted.com, cut to a few fields) for them, 2026-10-24. One Pace's catalog, its meta (first 3 of 489 episodes, its own ids) and its streams for the first episode; Cotonet's newest films (first 2, ids cotonet:tt...) and its streams for the first; links replaced by /video/ on the fake host (2026-10-24). Cinemeta's Featured films (first 1), 2026-10-25: Popular's second film, listed in both.",
  "routes": {
   "/dmm/catalog/movie/casted-movies.json": {
    "metas": [
@@ -1513,6 +1513,137 @@
      "title": "Op\u00e7\u00e3o 1",
      "behaviorHints": {
       "notWebReady": false
+     }
+    }
+   ]
+  },
+  "/cinemeta/catalog/movie/imdbRating.json": {
+   "metas": [
+    {
+     "imdb_id": "tt6262770",
+     "name": "Tenzing",
+     "popularities": {
+      "trakt": 1057,
+      "moviedb": 107.9694,
+      "stremio": 3.5989799999999996,
+      "stremio_lib": 0
+     },
+     "type": "movie",
+     "awards": "1 win & 1 nomination total",
+     "cast": [
+      "Genden Phuntsok",
+      "Tom Hiddleston",
+      "Willem Dafoe"
+     ],
+     "country": "United Kingdom, Australia, United States",
+     "description": "The untold and inspiring tale of one of the most important mountain climbers in history who, with Edmund Hillary, became the first person to reach the summit of Mount Everest.",
+     "director": [
+      "Jennifer Peedom"
+     ],
+     "genre": [
+      "Adventure",
+      "Biography",
+      "Drama"
+     ],
+     "imdbRating": "7.7",
+     "released": "2026-10-16T00:00:00.000Z",
+     "slug": "movie/tenzing-6262770",
+     "writer": [
+      "Luke Davies",
+      "Jennifer Peedom",
+      "Ed Douglas"
+     ],
+     "year": "2026",
+     "moviedb_id": 1288069,
+     "poster": "https://images.metahub.space/poster/small/tt6262770/img",
+     "runtime": "126 min",
+     "trailers": [
+      {
+       "source": "KkYCY5YR12U",
+       "type": "Trailer"
+      }
+     ],
+     "popularity": 3.5989799999999996,
+     "logo": "https://images.metahub.space/logo/medium/tt6262770/img",
+     "background": "https://images.metahub.space/background/medium/tt6262770/img",
+     "id": "tt6262770",
+     "genres": [
+      "Adventure",
+      "Biography",
+      "Drama"
+     ],
+     "releaseInfo": "2026",
+     "trailerStreams": [
+      {
+       "title": "Tenzing",
+       "ytId": "KkYCY5YR12U"
+      }
+     ],
+     "links": [
+      {
+       "name": "7.7",
+       "category": "imdb",
+       "url": "https://imdb.com/title/tt6262770"
+      },
+      {
+       "name": "Tenzing",
+       "category": "share",
+       "url": "https://www.strem.io/s/movie/tenzing-6262770"
+      },
+      {
+       "name": "Adventure",
+       "category": "Genres",
+       "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/movie/top?genre=Adventure"
+      },
+      {
+       "name": "Biography",
+       "category": "Genres",
+       "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/movie/top?genre=Biography"
+      },
+      {
+       "name": "Drama",
+       "category": "Genres",
+       "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/movie/top?genre=Drama"
+      },
+      {
+       "name": "Genden Phuntsok",
+       "category": "Cast",
+       "url": "stremio:///search?search=Genden%20Phuntsok"
+      },
+      {
+       "name": "Tom Hiddleston",
+       "category": "Cast",
+       "url": "stremio:///search?search=Tom%20Hiddleston"
+      },
+      {
+       "name": "Willem Dafoe",
+       "category": "Cast",
+       "url": "stremio:///search?search=Willem%20Dafoe"
+      },
+      {
+       "name": "Luke Davies",
+       "category": "Writers",
+       "url": "stremio:///search?search=Luke%20Davies"
+      },
+      {
+       "name": "Jennifer Peedom",
+       "category": "Writers",
+       "url": "stremio:///search?search=Jennifer%20Peedom"
+      },
+      {
+       "name": "Ed Douglas",
+       "category": "Writers",
+       "url": "stremio:///search?search=Ed%20Douglas"
+      },
+      {
+       "name": "Jennifer Peedom",
+       "category": "Directors",
+       "url": "stremio:///search?search=Jennifer%20Peedom"
+      }
+     ],
+     "behaviorHints": {
+      "defaultVideoId": "tt6262770",
+      "hasScheduledVideos": false
      }
     }
    ]

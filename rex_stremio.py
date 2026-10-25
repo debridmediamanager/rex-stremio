@@ -54,6 +54,7 @@ DEFAULTS = {
     "ffprobe": "ffprobe",
     "interval_minutes": 360,
     "max_resolution": None,
+    "collections": False,
     "max_size_gb": None,
     "addons": [],
     "catalogs": [],
@@ -404,6 +405,8 @@ def load_config(path):
             raise ValueError("max_size_gb must be a number")
         if not math.isfinite(config["max_size_gb"]) or config["max_size_gb"] <= 0:
             raise ValueError("max_size_gb must be positive")
+    if not isinstance(config.get("collections"), bool):
+        raise ValueError("collections must be true or false")
     if config["cache"] and not os.path.isabs(config["cache"]):
         config["cache"] = os.path.join(os.path.dirname(os.path.abspath(path)), config["cache"])
     if not config["relay_url"]:
@@ -530,10 +533,17 @@ def stremio_item(config, catalog, vid, imdb, meta, video, probe, extension):
     """One feed item (`docs/feed-api.md`): placed by its IMDb id, dressed by the catalog. A live
     channel has no IMDb id (`imdb` is the addon's own id): it goes unplaced, named by `display`."""
     path = "%s/%s/%s.%s" % (catalog["directory"], catalog["slug"], vid, extension)
+    held, file = "st-" + vid, path
+    if config.get("collections") and catalog["type"] != "tv" and imdb:
+        # One id per library, whichever catalog holds the title: when the one holding it stops
+        # listing it and the next takes over, rex keeps its row (and watch state) on that id. Its
+        # file is its own too: rex refuses a new id for a file another id has.
+        rest = vid[len(catalog["slug"]) + 1:]
+        held, file = "stc-%s-%s" % (catalog["directory"], rest), "%s/%s.%s" % (catalog["directory"], rest, extension)
     pushed = {
-        "id": "st-" + vid,
+        "id": held,
         "path": path,
-        "file": "%s/%s" % (config["mount"].rstrip("/"), path),
+        "file": "%s/%s" % (config["mount"].rstrip("/"), file),
         "name": meta.get("name") or imdb or str(meta.get("id")),
         "release": "stremio:%s" % (imdb or meta.get("id")),
         "media_info": probe,
@@ -588,7 +598,14 @@ class Sync:
         # stalled rex request cannot stop the relay or settings page from serving.
         self.publication_lock = threading.RLock()
         self.config_version = 0
+        # Set by a save on the settings page: the next complete snapshot may remove more than half
+        # of what rex holds (catalogs unticked, catalogs turned into collections), which rex
+        # refuses (409) unless forced. A start never forces, so rex's guard still holds then.
+        self.force_next = False
         self.catalog_incomplete = False
+        # A sync's titles held by a catalog, `(directory, type, imdb)`, and the IMDb ids the last
+        # catalog listed: with `collections` on, one title per library (`catalog_items`).
+        self.taken, self.catalog_listed = set(), set()
 
     def path(self, kind, vid, config=None, version=None):
         config = self.config if config is None else config
@@ -921,8 +938,10 @@ class Sync:
     def catalog_items(self, catalog, config=None, version=None):
         """A catalog's films, or its series' episodes (Cinemeta's list of them), pushed by their
         IMDb ids so Plex names them; the catalog's own names and pictures are `display`, shown
-        only until Plex names them."""
+        only until Plex names them. With `collections` on, a title an earlier catalog of the same
+        library took (`self.taken`) is left to it; `self.catalog_listed` keeps the IMDb ids listed."""
         config = self.config if config is None else config
+        self.catalog_listed = set()
         kind, limit = catalog["type"], catalog["limit"]
         complete = True
         answer = get_json(catalog["url"])
@@ -932,12 +951,12 @@ class Sync:
             # An empty answer can be a provider outage. Keep the last feed rows until a
             # non-empty response proves that this catalog is really empty.
             complete = False
-        wanted = []
+        wanted, skipped = [], 0
         for meta in answer["metas"]:
             if not isinstance(meta, dict):
                 complete = False
                 continue
-            if len(wanted) >= limit:
+            if len(wanted) + skipped >= limit:
                 continue
             if kind == "tv":
                 # A channel is known only by the addon's own id (`ustv-…`, `pp-live:…`), which is
@@ -956,7 +975,15 @@ class Sync:
             if not imdb and not own:
                 complete = False
                 continue
-            # Ids carry the catalog: one film in two catalogs is two items.
+            # Ids carry the catalog: one film in two catalogs is two items, unless catalogs are
+            # collections, when the first catalog of its library to list it holds it.
+            if imdb and config.get("collections"):
+                self.catalog_listed.add(imdb)
+                if (catalog["directory"], kind, imdb) in self.taken:
+                    # A film another catalog holds still counts as one of this catalog's.
+                    skipped += kind == "movie"
+                    continue
+                self.taken.add((catalog["directory"], kind, imdb))
             if not imdb:
                 # Only the addon knows it (One Pace, Sosac, Bamabin): it goes to rex named by the
                 # catalog (`display`), and plays from the addons that serve its own id.
@@ -1109,14 +1136,25 @@ class Sync:
             self.register(config)
         items = []
         incomplete = False
+        self.taken, listed = set(), []
         for catalog in config["catalogs"]:
             try:
                 items += self.catalog_items(catalog, config, version)
+                listed.append((catalog, self.catalog_listed))
                 incomplete |= self.catalog_incomplete
             except Exception as error:
                 incomplete = True
                 self.status = "failed at %s: %s" % (safe_error(catalog.get("title") or catalog["slug"]), safe_error(error))
                 LOG.warning("%s: %s", safe_url(catalog["url"]), safe_error(error))
+        if config.get("collections"):
+            # Every file of a title names all its collections: rex keeps the last list it was sent.
+            for item in items:
+                imdb = (item.get("ids") or {}).get("imdb")
+                if imdb:
+                    directory = item["path"].split("/", 1)[0]
+                    kind = "movie" if item.get("kind") == "movie" else "series"
+                    item["collections"] = [catalog.get("title") or catalog["slug"] for catalog, ids in listed
+                                           if catalog["directory"] == directory and catalog["type"] == kind and imdb in ids]
         if incomplete:
             chunks = [items[at:at + 200] for at in range(0, len(items), 200)] or [[]]
             for chunk in chunks:
@@ -1134,8 +1172,10 @@ class Sync:
         session = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         chunks = [items[at:at + 200] for at in range(0, len(items), 200)] or [[]]
         for part, chunk in enumerate(chunks):
-            answer = self.publish(version, "PUT", "/rex/feed/%s/snapshot" % config["source"],
-                                  {"session": session, "part": part, "complete": part == len(chunks) - 1, "items": chunk}, config)
+            body = {"session": session, "part": part, "complete": part == len(chunks) - 1, "items": chunk}
+            if body["complete"] and self.force_next:
+                body["force"] = True
+            answer = self.publish(version, "PUT", "/rex/feed/%s/snapshot" % config["source"], body, config)
             if answer is None:
                 self.status = "settings changed during sync; retrying"
                 return
@@ -1143,6 +1183,9 @@ class Sync:
                 if not isinstance(rejected, dict):
                     continue
                 LOG.warning("rex rejected %s: %s", rejected.get("id"), safe_error(rejected.get("reason")))
+        with self.config_guard:
+            if self.config_version == version:
+                self.force_next = False
         self.status = "%s: %d items in rex" % (time.strftime("%Y-%m-%d %H:%M"), len(items))
         LOG.info("pushed %d items: %s", len(items), {key: answer.get(key) for key in ("created", "updated", "removed")})
 
@@ -1263,6 +1306,8 @@ button.plain{background:transparent;color:var(--accent)}form.inline{display:inli
 <h2>Catalogs</h2>
 <p class="muted">Each chosen catalog's films, or episodes, go into the library you name. Same name, same library.</p>
 <div class="scroll"><table><tr><th>Take</th><th>Catalog</th><th>Library</th><th>How many</th></tr>%(catalogs)s</table></div>
+<div class="row" style="margin-top:8px"><input type="checkbox" id="collections" name="collections" value="1"%(collections)s>
+<label for="collections">Catalogs as collections: each catalog is a collection in its library, and a title in several is there once</label></div>
 <h2>Streams</h2>
 <p class="muted">The highest resolution within these limits plays; ties go by the addons' own order. If a link no longer opens, the next one plays.</p>
 <div class="row"><label for="res">Highest resolution</label><select id="res" name="max_resolution">%(resolutions)s</select>
@@ -1318,7 +1363,7 @@ def page(config, status):
                           for value, label in (("", "any"), ("2160", "2160p (4K)"), ("1080", "1080p"), ("720", "720p")))
     return PAGE % {"status": esc(safe_error(status)), "addons": "".join(rows) or '<tr><td colspan="3"><small>None yet.</small></td></tr>',
                    "catalogs": "".join(catalogs) or '<tr><td colspan="4"><small>Add an addon with catalogs, such as Cinemeta.</small></td></tr>',
-                   "resolutions": resolutions, "max_size_gb": esc(config.get("max_size_gb") or ""),
+                   "resolutions": resolutions, "collections": " checked" if config.get("collections") else "", "max_size_gb": esc(config.get("max_size_gb") or ""),
                    # The settings field is an authorized private input and must round-trip exactly;
                    # safe_url is reserved for logs/status and addon display.
                    "rex_url": esc(config["rex_url"])}
@@ -1355,6 +1400,7 @@ class App:
                     catalog["directory"] = slug(catalog.get("library") or "")
                 catalogs.append(catalog)
             values["catalogs"] = [{key: value for key, value in catalog.items() if value} for catalog in catalogs]
+            values["collections"] = form.get("collections", [""])[0] == "1"
             values["max_resolution"] = int(form["max_resolution"][0]) if form.get("max_resolution", [""])[0].isdigit() else None
             size = form.get("max_size_gb", [""])[0]
             values["max_size_gb"] = float(size) if re.fullmatch(r"\d+(\.\d+)?", size) and float(size) > 0 else None
@@ -1398,6 +1444,7 @@ class App:
                     self.config.clear()
                     self.config.update(fresh)
                     self.sync.config_version += 1
+                    self.sync.force_next = True
                     with self.sync.guard:
                         self.sync.cache.clear()
         if sync:

@@ -1196,7 +1196,8 @@ class AgainstRex(unittest.TestCase):
                       handle)
         self.config = rex_stremio.load_config(path)
         self.sync = rex_stremio.Sync(self.config)
-        server = ThreadingHTTPServer(("127.0.0.1", relay), rex_stremio.App(path, self.config, self.sync).handler())
+        self.app = rex_stremio.App(path, self.config, self.sync)
+        server = ThreadingHTTPServer(("127.0.0.1", relay), self.app.handler())
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(stop_server, server)
         self.relay = relay
@@ -1204,6 +1205,16 @@ class AgainstRex(unittest.TestCase):
         patch = unittest.mock.patch.object(rex_stremio, "opens", lambda url, headers=None: url)
         patch.start()
         self.addCleanup(patch.stop)
+
+    def films(self, sections):
+        """The films library's titles not in the trash."""
+        listed = self.get("/library/sections/%s/all" % sections["Stremio Films"]["key"])["MediaContainer"]["Metadata"]
+        return [film for film in listed if not all(media.get("deletedAt") for media in
+                                                    self.get("/library/metadata/%s" % film["ratingKey"])["MediaContainer"]["Metadata"][0]["Media"])]
+
+    def scrobble(self, key):
+        urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%d/:/scrobble?identifier=com.plexapp.plugins.library&key=%s"
+                                                      % (self.port, key), headers={"X-Plex-Token": self.TOKEN}), timeout=30)
 
     def get(self, path):
         request = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path),
@@ -1251,6 +1262,49 @@ class AgainstRex(unittest.TestCase):
                 body = answer.read().decode()
         self.assertEqual(fetched, [USATV[0]["url"]])
         self.assertEqual(len([line for line in body.splitlines() if line.startswith("#EXT-X-STREAM-INF")]), 1)
+
+    def test_catalogs_as_collections(self):
+        """Cinemeta's Popular and Featured both list Tenzing (tt6262770): with `collections` on it
+        is one film, probed once, in both catalogs' collections."""
+        values = read_json(os.path.join(self.work, "config.json"))
+        top = values["catalogs"][1]
+        # Only catalogs every title of which plays, so each sync is complete and removes.
+        values["catalogs"] = values["catalogs"][:3]
+        values["catalogs"].insert(2, {"url": top["url"].replace("top.json", "imdbRating.json"), "title": "Featured films", "limit": 1})
+        self.app.save(values, sync=False)
+        self.sync.once()
+        sections = {row["title"]: row for row in self.get("/library/sections")["MediaContainer"]["Directory"]}
+        names = [meta["name"] for meta in STREMIO["/cinemeta/catalog/movie/top.json"]["metas"]]
+        self.assertEqual(sorted(film["title"] for film in self.films(sections)), sorted(["One Battle After Another", names[1]] + names))
+        # Turned on, every id moves (one per library, not per catalog), each with a file of its
+        # own, which rex refuses for an id whose file another has: more than half of what rex
+        # holds goes, which rex refuses unless the snapshot is forced, as a save forces it.
+        values["collections"] = True
+        self.app.save(values, sync=False)
+        probed = []
+        real_probe = self.sync.probe
+        with unittest.mock.patch.object(self.sync, "probe", lambda vid, *rest: probed.append(vid) or real_probe(vid, *rest)):
+            self.sync.once()
+        self.assertIn("items in rex", self.sync.status)
+        self.assertFalse([vid for vid in probed if vid.startswith("featured-films-")])
+        films = self.films(sections)
+        self.assertEqual(sorted(film["title"] for film in films), sorted(["One Battle After Another"] + names))
+        listed = self.get("/library/sections/%s/collections" % sections["Stremio Films"]["key"])["MediaContainer"].get("Metadata", [])
+        members = {collection["title"]: sorted(row["title"] for row in self.get("/library/collections/%s/children" % collection["ratingKey"])
+                                               ["MediaContainer"].get("Metadata", []))
+                   for collection in listed}
+        self.assertEqual(members, {"DMM Cast": ["One Battle After Another"], "Top films": sorted(names), "Featured films": [names[1]]})
+        shows = self.get("/library/sections/%s/collections" % sections["Stremio Shows"]["key"])["MediaContainer"].get("Metadata", [])
+        self.assertEqual([collection["title"] for collection in shows], ["Top shows"])
+        # Popular stops listing it: Featured takes it over, and rex keeps the film it was.
+        shared = next(film for film in films if film["title"] == names[1])
+        self.scrobble(shared["ratingKey"])
+        values["catalogs"][1]["limit"] = 1
+        self.app.save(values, sync=False)
+        self.sync.once()
+        self.assertIn("items in rex", self.sync.status)
+        moved = [film for film in self.films(sections) if film["title"] == names[1]]
+        self.assertEqual([(film["ratingKey"], film.get("viewCount")) for film in moved], [(shared["ratingKey"], 1)])
 
     def test_empty_catalog_keeps_existing_rows_and_upserts_healthy_addition(self):
         self.sync.once()

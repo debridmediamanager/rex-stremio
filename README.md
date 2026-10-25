@@ -56,7 +56,9 @@ Then open `http://127.0.0.1:9982/` on the same machine:
    `https://v3-cinemeta.strem.io/manifest.json` for catalogs, and your Torrentio link (from its
    configure page, with your debrid service) for streams.
 2. Tick the catalogs you want under **Catalogs**, name the library each goes into and how many
-   films, episodes or channels to take.
+   films, episodes or channels to take. For one library with a collection per catalog, give the
+   catalogs the same library and tick **Catalogs as collections**: a film several of them list is
+   in that library once, in each of their collections.
 3. Set **rex's address**, for example `http://192.168.1.20:32400`, and press **Save and sync**.
 
 The libraries show up in your Plex apps within a few minutes. rex-stremio syncs again every six
@@ -91,6 +93,7 @@ The page writes `config.json` (mode 600). You can also edit it yourself and rest
 | `interval_minutes` | `360` | How often to sync |
 | `max_resolution` | any | `2160`, `1080` or `720`: no stream above it plays |
 | `max_size_gb` | any | No stream larger than this plays |
+| `collections` | `false` | Each catalog a collection in its library, and a title several catalogs of one library list there once. Needs a rex whose feed takes `collections` |
 | `addons` | | Each addon's manifest `url`, and its `manifest` as it was when added |
 | `catalogs` | | Each catalog's `url` (`<addon>/catalog/<movie, series or tv>/<id>.json`), `library`, `limit` (default 50), `title`, and its persisted `slug`/`directory` identity |
 
@@ -99,6 +102,8 @@ The page writes `config.json` (mode 600). You can also edit it yourself and rest
 - Episodes come from Cinemeta and use its season and episode numbers. For a few shows these are
   not TMDB's, which rex follows, so an episode can land in the wrong place.
 - A series catalog's **How many** counts episodes, not shows.
+- Turning **Catalogs as collections** on or off sends its titles to rex as new items and puts
+  the old ones in the trash, so what was watched on them may not carry over.
 - Catalogs of types other than films, series and channels (an addon's `anime`, `channel`) are
   not listed.
 - Links that need headers (an addon's `proxyHeaders`) play through rex-stremio, which then carries
