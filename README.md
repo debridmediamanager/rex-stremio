@@ -21,6 +21,23 @@ feed API, as every rex source does.
 
 ## Screenshots
 
+Plex Web on a rex fed by seven addons: Cinemeta, Streaming Catalogs, Rotten Tomatoes, Mubi
+Catalog and USA TV Next for catalogs, Torrentio over Real-Debrid for streams. With **Catalogs as
+collections**, six film catalogs share one Movies library, a collection each.
+
+![Movies library in Plex Web: Certified Fresh, Disney+, HBO Max, Netflix, New on MUBI and Popular collections](docs/screenshots/plex-movies-collections.jpg)
+
+<details>
+<summary>A collection, the TV Shows library and Live TV</summary>
+
+![The Netflix collection: the catalog's films, named and pictured by Plex](docs/screenshots/plex-collection-netflix.jpg)
+
+![TV Shows library: shows from the Cinemeta and Streaming Catalogs series catalogs, with their seasons](docs/screenshots/plex-tv.jpg)
+
+![Live TV library: USA TV Next's channels, named and pictured by the addon](docs/screenshots/plex-live.jpg)
+
+</details>
+
 The settings page with example addons, selected catalogs and playback limits.
 
 ![Light appearance: Cinemeta and Torrentio addons, catalog libraries and playback settings](docs/screenshots/settings-light.png)
