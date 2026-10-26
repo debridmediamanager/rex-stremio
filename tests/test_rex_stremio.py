@@ -889,10 +889,60 @@ class PartialSync(unittest.TestCase):
              unittest.mock.patch.object(sync, "cached", side_effect=AssertionError("invalid rows must not be probed")):
             sync.rex = lambda method, request_path, body=None, config=None: calls.append((method, request_path, body)) or {}
             sync.once()
-        self.assertEqual(calls, [("POST", "/rex/feed/stremio/items", {"items": []})])
+        self.assertEqual(calls, [])
+
+    def test_each_catalog_reaches_rex_before_the_next_is_checked(self):
+        # A first sync of 61 catalogs took hours, and rex showed nothing until the last was done.
+        path = config_file(self, {"catalogs": [
+            {"url": "https://a/catalog/movie/one.json"},
+            {"url": "https://a/catalog/movie/two.json"}]})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        first, second = {"id": "first", "path": "films/first.mkv"}, {"id": "second", "path": "films/second.mkv"}
+        calls = []
+        sync.register = lambda config=None: None
+
+        def catalog_items(catalog, config=None, version=None):
+            if catalog["url"].endswith("two.json"):
+                self.assertIn(("POST", "/rex/feed/stremio/items", {"items": [first]}), calls)
+                return [second]
+            return [first]
+
+        sync.catalog_items = catalog_items
+        sync.rex = lambda method, request_path, body=None, config=None: calls.append((method, request_path, body)) or {}
+        sync.once()
+        self.assertEqual([call[:2] for call in calls], [("POST", "/rex/feed/stremio/items")] * 2
+                         + [("PUT", "/rex/feed/stremio/snapshot")])
+        self.assertEqual(calls[-1][2]["items"], [first, second])
 
 
 class Concurrency(unittest.TestCase):
+    def test_save_stops_the_obsolete_pass_from_probing(self):
+        # After a save, the old pass's relay paths 404: on one VPS (2026-10-26) it went on to fail
+        # 5,147 probes over its remaining catalogs before the new settings were synced at all.
+        path = config_file(self, {"cache": tempfile.mkdtemp(prefix="rex-stremio-cache-"), "catalogs": [
+            {"url": "https://a/catalog/movie/one.json"},
+            {"url": "https://a/catalog/movie/two.json"}]})
+        config = rex_stremio.load_config(path)
+        sync = rex_stremio.Sync(config)
+        app = rex_stremio.App(path, config, sync)
+        sync.register = lambda config=None: None
+        calls, probed = [], []
+        sync.rex = lambda method, request_path, body=None, config=None: calls.append((method, request_path)) or {}
+
+        def probe(vid, catalog, config=None):
+            probed.append(vid)
+            app.save(dict(sync.config), sync=False)
+            raise RuntimeError("http://relay Server returned 404 Not Found")
+
+        metas = {"metas": [{"id": "tt%07d" % n, "name": "Film %d" % n} for n in range(1, 4)]}
+        with unittest.mock.patch.object(rex_stremio, "get_json", return_value=metas), \
+             unittest.mock.patch.object(sync, "probe", side_effect=probe):
+            sync.once()
+        self.assertEqual(len(probed), 1)
+        self.assertEqual(calls, [])
+        self.assertEqual(sync.status, "settings changed during sync; retrying")
+
     def test_blocked_catalog_scan_allows_save_and_aborts_old_feed(self):
         path = config_file(self, {"catalogs": [{"url": "https://a/catalog/movie/top.json"}],
                                   "cache": tempfile.mkdtemp(prefix="rex-stremio-lock-")})

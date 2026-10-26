@@ -782,6 +782,10 @@ class Sync:
         with self.guard:
             return (self.relayed.get(vid) or {}).get(token), self.via.get(vid) or {}
 
+    def stale(self, version):
+        with self.config_guard:
+            return version is not None and self.config_version != version
+
     def publish(self, version, method, path, body, config):
         """Make one feed request only while its generation is still current.
 
@@ -1037,6 +1041,11 @@ class Sync:
                     wanted.append((vid, video["id"], dict(full, **meta), video, (), None))
         items = []
         for vid, sid, meta, video, also, imdb in wanted:
+            if self.stale(version):
+                # A save replaced this pass's catalogs: the relay no longer routes their paths, so
+                # every probe left would 404 (5,147 of them on one VPS, 2026-10-26).
+                complete = False
+                break
             info_path = self.path("info", vid, config, version)
             expected_info = dict({"kind": kind, "sid": sid}, **({"also": list(also)} if also else {}))
             try:
@@ -1138,6 +1147,7 @@ class Sync:
         incomplete = False
         self.taken, listed = set(), []
         for catalog in config["catalogs"]:
+            before = len(items)
             try:
                 items += self.catalog_items(catalog, config, version)
                 listed.append((catalog, self.catalog_listed))
@@ -1146,6 +1156,21 @@ class Sync:
                 incomplete = True
                 self.status = "failed at %s: %s" % (safe_error(catalog.get("title") or catalog["slug"]), safe_error(error))
                 LOG.warning("%s: %s", safe_url(catalog["url"]), safe_error(error))
+                continue
+            if self.stale(version):
+                self.status = "settings changed during sync; retrying"
+                return
+            # Each catalog shows in rex once it is checked, not hours later when the last one is;
+            # the snapshot at the end still removes what is gone.
+            for at in range(0, len(items) - before, 200):
+                answer = self.publish(version, "POST", "/rex/feed/%s/items" % config["source"],
+                                      {"items": items[before + at:before + at + 200]}, config)
+                if answer is None:
+                    self.status = "settings changed during sync; retrying"
+                    return
+                for rejected in answer.get("rejected") or []:
+                    if isinstance(rejected, dict):
+                        LOG.warning("rex rejected %s: %s", rejected.get("id"), safe_error(rejected.get("reason")))
         if config.get("collections"):
             # Every file of a title names all its collections: rex keeps the last list it was sent.
             for item in items:
@@ -1156,16 +1181,13 @@ class Sync:
                     item["collections"] = [catalog.get("title") or catalog["slug"] for catalog, ids in listed
                                            if catalog["directory"] == directory and catalog["type"] == kind and imdb in ids]
         if incomplete:
-            chunks = [items[at:at + 200] for at in range(0, len(items), 200)] or [[]]
+            # Every item went up with its catalog; only the collections, known now, are left to send.
+            chunks = [items[at:at + 200] for at in range(0, len(items), 200)] if config.get("collections") else []
             for chunk in chunks:
                 answer = self.publish(version, "POST", "/rex/feed/%s/items" % config["source"], {"items": chunk}, config)
                 if answer is None:
                     self.status = "settings changed during sync; retrying"
                     return
-                for rejected in answer.get("rejected") or []:
-                    if not isinstance(rejected, dict):
-                        continue
-                    LOG.warning("rex rejected %s: %s", rejected.get("id"), safe_error(rejected.get("reason")))
             self.status = "%s: partial sync, %d items upserted" % (time.strftime("%Y-%m-%d %H:%M"), len(items))
             LOG.warning("upserted %d items without removing existing rows", len(items))
             return
