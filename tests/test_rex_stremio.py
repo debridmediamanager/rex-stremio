@@ -323,6 +323,14 @@ class Logic(unittest.TestCase):
         os.close(handles["reused"])
         self.assertFalse(os.path.exists(target))
 
+    def test_write_json_works_without_fchmod_as_on_windows(self):
+        target = os.path.join(tempfile.mkdtemp(prefix="rex-stremio-write-"), "config.json")
+        with unittest.mock.patch.object(rex_stremio.os, "fchmod", create=True) as fchmod:
+            del rex_stremio.os.fchmod
+            rex_stremio.write_json(target, {"written": True})
+        self.assertFalse(fchmod.called)
+        self.assertEqual(read_json(target), {"written": True})
+
     def test_explicit_slug_is_reserved_and_conflicts_are_rejected(self):
         config = rex_stremio.load_config(config_file(self, {"catalogs": [
             {"url": "https://a/catalog/movie/top.json", "title": "Popular"},

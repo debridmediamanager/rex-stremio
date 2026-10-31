@@ -111,7 +111,8 @@ def write_json(path, value, indent=None):
     directory = os.path.dirname(os.path.abspath(path)) or "."
     descriptor, temporary = tempfile.mkstemp(prefix=".%s-" % os.path.basename(path), dir=directory)
     try:
-        os.fchmod(descriptor, 0o600)
+        if hasattr(os, "fchmod"):  # Windows has none, and its files have no mode bits to set
+            os.fchmod(descriptor, 0o600)
         handle = os.fdopen(descriptor, "w")
         # fdopen now owns the descriptor. Do not close its old integer again if a later
         # dump/replace fails: that number may already have been reused by another thread.
