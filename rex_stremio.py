@@ -1307,15 +1307,15 @@ TAILSCALE = ipaddress.ip_network("100.64.0.0/10")
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>rex-stremio</title>
 <style>
-:root{color-scheme:light dark;--fg:#1d1d1f;--bg:#fafafa;--muted:#6e6e73;--line:#d2d2d7;--accent:#0a66c2}
-@media (prefers-color-scheme:dark){:root{--fg:#f5f5f7;--bg:#161617;--muted:#a1a1a6;--line:#3a3a3c;--accent:#4c9ee8}}
+:root{color-scheme:light dark;--fg:#1d1d1f;--bg:#fafafa;--muted:#6e6e73;--line:#d2d2d7;--accent:#b4500f;--on-accent:#fff}
+@media (prefers-color-scheme:dark){:root{--fg:#f5f5f7;--bg:#161617;--muted:#a1a1a6;--line:#3a3a3c;--accent:#ff9a62;--on-accent:#1a0d05}}
 body{font:15px/1.5 system-ui,sans-serif;color:var(--fg);background:var(--bg);max-width:860px;margin:0 auto;padding:16px}
 h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:28px 0 8px}p.muted,small{color:var(--muted)}
 table{width:100%%;border-collapse:collapse}td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
 input[type=text],input[type=url],input[type=number],select{font:inherit;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:transparent;color:inherit;max-width:100%%}
-button{font:inherit;padding:5px 12px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer}
+button{font:inherit;padding:5px 12px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);cursor:pointer}
 button.plain{background:transparent;color:var(--accent)}form.inline{display:inline}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.scroll{overflow-x:auto}
+.scroll{overflow-x:auto}input[type=checkbox]{accent-color:var(--accent)}
 </style></head><body>
 <h1>rex-stremio</h1><p class="muted">Stremio catalogs as rex libraries. Sync: %(status)s</p>
 <h2>Addons</h2>
@@ -1385,7 +1385,7 @@ def page(config, status):
                           for value, label in (("", "any"), ("2160", "2160p (4K)"), ("1080", "1080p"), ("720", "720p")))
     return PAGE % {"status": esc(safe_error(status)), "addons": "".join(rows) or '<tr><td colspan="3"><small>None yet.</small></td></tr>',
                    "catalogs": "".join(catalogs) or '<tr><td colspan="4"><small>Add an addon with catalogs, such as Cinemeta.</small></td></tr>',
-                   "resolutions": resolutions, "collections": " checked" if config.get("collections") else "", "max_size_gb": esc(config.get("max_size_gb") or ""),
+                   "resolutions": resolutions, "collections": " checked" if config.get("collections") else "", "max_size_gb": esc("%g" % config["max_size_gb"] if config.get("max_size_gb") else ""),
                    # The settings field is an authorized private input and must round-trip exactly;
                    # safe_url is reserved for logs/status and addon display.
                    "rex_url": esc(config["rex_url"])}

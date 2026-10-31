@@ -40,7 +40,7 @@ collections**, six film catalogs share one Movies library, a collection each.
 
 The settings page with example addons, selected catalogs and playback limits.
 
-![Light appearance: Cinemeta and Torrentio addons, catalog libraries and playback settings](docs/screenshots/settings-light.png)
+![Light appearance: Cinemeta and Public Domain Movies addons, catalog libraries and playback settings](docs/screenshots/settings-light.png)
 
 <details>
 <summary>Dark appearance</summary>
