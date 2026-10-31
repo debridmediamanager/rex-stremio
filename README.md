@@ -53,7 +53,7 @@ The settings page with example addons, selected catalogs and playback limits.
 
 | You need | Why |
 |---|---|
-| rex, nightly 2026.10.25 or newer, claimed | A claimed rex lets Plex name each title. Setup: [rex](https://notes.debridmediamanager.com/guides/rex/) |
+| rex, nightly 2026.10.25 or newer, claimed | A claimed rex lets Plex name each title. Setup: [rex](https://notes.debridmediamanager.com/rex/stremio/) |
 | Python 3.9 or newer and `ffprobe` (part of FFmpeg) | rex-stremio checks each title's stream once with ffprobe, because rex needs to know what is in it before it can play |
 | FFmpeg where rex runs, for addons that give HLS streams (`.m3u8`) | rex plays those by converting them (a copy, cheap). Files (`.mkv`, `.mp4`) need nothing |
 | Stream addons that give links, not torrents | rex plays files. Set your debrid service in the addon (for Torrentio, cached results only), or use one that gives links, such as DMM Cast |
