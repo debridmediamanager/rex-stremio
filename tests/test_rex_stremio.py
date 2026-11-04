@@ -10,6 +10,7 @@ rex binary: REX_BIN.
     REX_BIN=/path/to/rex python3 -m unittest discover -s tests
 """
 import json
+import math
 import os
 import re
 import socket
@@ -1213,6 +1214,138 @@ class Relay(unittest.TestCase):
         self.assertEqual([entry["key"] for entry in info["refused"]], [self.base + "/hdr/eclipsia-0.mp4"])
         # The next resolve skips what was set aside.
         self.assertEqual(self.sync.resolve("films-tt0111161"), self.base + "/hdr/eclipsia-1.m3u8")
+
+
+class RateLimitedAddon(unittest.TestCase):
+    """111477 behind Cloudflare's rate limit (error 1015, `stream-111477-cloudflare-1015.json`):
+    a catalog's titles asked one after another tripped it after 13 of 50 films, and every title
+    after that failed within seconds until the next sync, six hours later (2026-11-03)."""
+    CAPTURED = read_json(os.path.join(FIXTURES, "stream-111477-cloudflare-1015.json"))
+    TITLES = ["tt%07d" % number for number in range(1, 9)]
+
+    def serve(self, allowed=3, window=1.0, retry_after=True, refuse_after=None):
+        """The addon as Cloudflare fronts it: `allowed` stream answers per `window` seconds, then
+        the captured 429 until that window ends, its Retry-After the seconds left (left out when
+        not `retry_after`). From `refuse_after` stream requests on, it refuses every one."""
+        asked, served, state, lock = [], [], {"blocked": 0.0}, threading.Lock()
+        captured, titles = self.CAPTURED, self.TITLES
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def answer(self, status, headers, raw):
+                self.send_response(status)
+                for name, value in headers.items():
+                    self.send_header(name, value)
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def do_GET(self):
+                path = urllib.parse.unquote(self.path)
+                if "/catalog/" in path:
+                    body = {"metas": [{"id": title, "type": "movie", "name": title} for title in titles]}
+                    return self.answer(200, {"Content-Type": "application/json"}, json.dumps(body).encode())
+                now = time.monotonic()
+                with lock:
+                    asked.append((now, path))
+                    if now >= state["blocked"] and (refuse_after is None or len(asked) <= refuse_after):
+                        if sum(1 for at, _ in served if now - at < window) < allowed:
+                            served.append((now, path))
+                            body = dict(captured["answered"], streams=[dict(stream, url=stream["url"] + "?" + path)
+                                                                       for stream in captured["answered"]["streams"]])
+                            return self.answer(200, {"Content-Type": "application/json"}, json.dumps(body).encode())
+                        state["blocked"] = now + window
+                    left = max(state["blocked"] - now, 0.001 if refuse_after is None else window)
+                headers = {name: value for name, value in captured["refused"]["headers"].items()
+                           if name not in ("content-length", "retry-after", "date")}
+                if retry_after:
+                    headers["Retry-After"] = str(math.ceil(left))
+                self.answer(captured["refused"]["status"], headers, captured["refused"]["body"].encode())
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(stop_server, server)
+        base = "http://127.0.0.1:%d" % server.server_address[1]
+        work = tempfile.mkdtemp(prefix="rex-stremio-")
+        config = rex_stremio.load_config(config_file(self, {
+            "cache": work, "stream_interval_seconds": 0.2, "retry_minutes": 1,
+            "addons": [{"url": base + "/111477/manifest.json", "manifest": {
+                "id": "org.111477.stremio", "name": "111477 stremio", "resources": ["stream"], "types": ["movie", "series"],
+                "idPrefixes": ["tt"], "catalogs": []}}],
+            "catalogs": [{"url": base + "/cinemeta/catalog/movie/top.json", "title": "Popular films"}]}))
+        sync = rex_stremio.Sync(config)
+        probe = read_json(os.path.join(FIXTURES, "probe-top-films-tt6262770.json"))
+        sync.probe = lambda vid, catalog, config=None: sync.resolve(vid) and probe
+        patch = unittest.mock.patch.object(rex_stremio, "opens", lambda url, headers=None: url)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return sync, config, asked, served
+
+    def sync_all(self, **limits):
+        sync, config, asked, served = self.serve(**limits)
+        started = time.monotonic()
+        items = sync.catalog_items(config["catalogs"][0])
+        elapsed = time.monotonic() - started
+        refused = [path for at, path in asked if (at, path) not in served]
+        # Every title plays, each asked again in this pass after its refusal.
+        self.assertEqual(sorted(item["ids"]["imdb"] for item in items), self.TITLES)
+        self.assertTrue(refused, "the limit never tripped")
+        for path in refused:
+            self.assertIn(path, [answered for _, answered in served])
+        # Paced: never two stream requests to the host closer than stream_interval_seconds.
+        times = [at for at, _ in asked]
+        self.assertGreaterEqual(min(b - a for a, b in zip(times, times[1:])), 0.18)
+        self.assertLess(elapsed, 20)
+        return sync
+
+    def test_429_with_retry_after_is_waited_out_and_the_title_asked_again(self):
+        self.sync_all(retry_after=True)
+
+    def test_429_without_retry_after_backs_off(self):
+        backoff = rex_stremio.BACKOFF
+        rex_stremio.BACKOFF = 0.5
+        self.addCleanup(setattr, rex_stremio, "BACKOFF", backoff)
+        self.sync_all(retry_after=False)
+
+    def test_a_host_that_keeps_refusing_is_left_for_the_pass_and_retried_soon(self):
+        sync, config, asked, served = self.serve(refuse_after=2, window=1.0)
+        items, waits = [], []
+
+        class Stop(Exception):
+            pass
+
+        def wait(seconds):
+            waits.append(seconds)
+            raise Stop
+
+        sync.once = lambda: items.extend(sync.catalog_items(config["catalogs"][0]))
+        sync.wake.wait = wait
+        started = time.monotonic()
+        with self.assertRaises(Stop):
+            sync.forever()
+        # Two titles play; the host then refuses three times in a row and is not asked again in
+        # this pass, which ends at once instead of failing each title against it, and the next
+        # pass comes after retry_minutes, not the six-hour interval.
+        self.assertEqual(len(items), 2)
+        self.assertEqual(len(asked), 2 + rex_stremio.REFUSALS)
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertEqual(waits, [60])
+
+    def test_a_null_streams_answer_is_a_refusal(self):
+        # 111477 answers {"streams": null} while its own index is throttled, [] for a title it
+        # does not know (captured): null is no answer, so the title is asked again later.
+        sync, config, asked, served = self.serve()
+        with unittest.mock.patch.object(rex_stremio, "get_json", return_value=self.CAPTURED["throttled"]), \
+                unittest.mock.patch.object(rex_stremio, "BACKOFF", 0.01):
+            self.assertEqual(sync.streams("movie", "tt0111161", config), [])
+        self.assertTrue(sync.retry_soon)
+        sync.retry_soon = False
+        sync.hosts.clear()
+        with unittest.mock.patch.object(rex_stremio, "get_json", return_value=self.CAPTURED["unknown"]):
+            self.assertEqual(sync.streams("movie", "tt9999999999", config), [])
+        self.assertFalse(sync.retry_soon)
 
 
 @unittest.skipUnless(os.path.exists(os.environ.get("REX_BIN", "/nonexistent")), "REX_BIN names no rex binary")

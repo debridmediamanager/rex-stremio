@@ -20,6 +20,7 @@ Standard library only; ffprobe is a separate executable.
 import argparse
 import collections
 import copy
+import email.utils
 import functools
 import hashlib
 import html
@@ -53,6 +54,8 @@ DEFAULTS = {
     "cache": "cache",
     "ffprobe": "ffprobe",
     "interval_minutes": 360,
+    "stream_interval_seconds": 1,
+    "retry_minutes": 10,
     "max_resolution": None,
     "collections": False,
     "max_size_gb": None,
@@ -80,6 +83,31 @@ RESOLUTIONS = [(r"2160p|\b4k\b|\buhd\b", 2160), (r"1440p", 1440), (r"1080p|\bfhd
 # live channel (`tv`) is a film-like row: nothing identifies it, the addon's `display` names it.
 LIBRARIES = {"movie": "Stremio Films", "series": "Stremio Shows", "tv": "Live TV"}
 REX_KINDS = {"movie": "movies", "series": "shows", "tv": "movies"}
+
+
+# A stream addon's host is asked at most once per `stream_interval_seconds`. One that refuses (429,
+# or `{"streams": null}`) is asked again after its Retry-After, else BACKOFF doubling, at most
+# MAX_BACKOFF; after REFUSALS in a row, not before `retry_minutes`. 111477's Cloudflare limit
+# allowed 3 requests in 10 s and refused the 4th with Retry-After 10 (2026-11-04).
+REFUSALS = 3
+BACKOFF = 5
+MAX_BACKOFF = 60
+
+
+class Refused(Exception):
+    pass
+
+
+def retry_after(value):
+    """Retry-After's seconds (a number or an HTTP date), or None."""
+    try:
+        return max(float(value), 0.0)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return max(email.utils.parsedate_to_datetime(value).timestamp() - time.time(), 0.0)
+    except (TypeError, ValueError):
+        return None
 
 
 def slug(text):
@@ -392,6 +420,13 @@ def load_config(path):
     if interval <= 0:
         raise ValueError("interval_minutes must be positive")
     config["interval_minutes"] = interval
+    try:
+        config["stream_interval_seconds"] = float(config.get("stream_interval_seconds"))
+        config["retry_minutes"] = float(config.get("retry_minutes"))
+    except (TypeError, ValueError):
+        raise ValueError("stream_interval_seconds and retry_minutes must be numbers")
+    if not (0 <= config["stream_interval_seconds"] <= 60) or not (0 < config["retry_minutes"] <= 1440):
+        raise ValueError("stream_interval_seconds must be 0 to 60, retry_minutes above 0 and at most 1440")
     if config.get("max_resolution") is not None:
         try:
             config["max_resolution"] = int(config["max_resolution"])
@@ -607,6 +642,9 @@ class Sync:
         # A sync's titles held by a catalog, `(directory, type, imdb)`, and the IMDb ids the last
         # catalog listed: with `collections` on, one title per library (`catalog_items`).
         self.taken, self.catalog_listed = set(), set()
+        # Each stream addon host's pacing: when it may be asked next and its refusals in a row.
+        # `retry_soon`: a host refused during this pass, so the next one comes after retry_minutes.
+        self.hosts, self.hosts_lock, self.retry_soon = {}, threading.Lock(), False
 
     def path(self, kind, vid, config=None, version=None):
         config = self.config if config is None else config
@@ -839,7 +877,7 @@ class Sync:
             addon, sid = pair
             manifest = addon_manifest(addon)
             try:
-                answer = get_json("%s/stream/%s/%s.json" % (addon_base(addon["url"]), kind, urllib.parse.quote(sid)), 30)
+                answer = self.ask_addon("%s/stream/%s/%s.json" % (addon_base(addon["url"]), kind, urllib.parse.quote(sid)), config)
                 streams = answer.get("streams") if isinstance(answer, dict) else []
                 return [stream for stream in streams or [] if isinstance(stream, dict)] if isinstance(streams, list) else []
             except Exception as error:
@@ -847,6 +885,44 @@ class Sync:
                 return []
         with ThreadPoolExecutor(max(len(addons), 1)) as pool:
             return [stream for answer in pool.map(ask, addons) for stream in answer]
+
+    def ask_addon(self, url, config):
+        """A stream addon's answer, its host paced and its refusals waited out (see REFUSALS).
+        A host that keeps refusing is not asked until `retry_minutes` pass: {} meanwhile."""
+        host = urllib.parse.urlsplit(url).netloc
+        while True:
+            with self.hosts_lock:
+                state = self.hosts.setdefault(host, {"next": 0.0, "refusals": 0})
+                now = time.time()
+                if state["refusals"] >= REFUSALS and state["next"] > now:
+                    self.retry_soon = True
+                    return {}
+                start = max(now, state["next"])
+                state["next"] = start + config["stream_interval_seconds"]
+            time.sleep(start - now)
+            try:
+                answer = get_json(url, 30)
+                if isinstance(answer, dict) and "streams" in answer and not isinstance(answer["streams"], list):
+                    raise Refused("streams is not an array")  # 111477's while its own index is throttled
+            except (urllib.error.HTTPError, Refused) as error:
+                if isinstance(error, urllib.error.HTTPError) and error.code != 429:
+                    raise
+                with self.hosts_lock:
+                    self.retry_soon = True
+                    state["refusals"] += 1
+                    if state["refusals"] >= REFUSALS:
+                        state["next"] = time.time() + config["retry_minutes"] * 60
+                        LOG.warning("%s refused %d times in a row (%s): not asked again before %s", host, state["refusals"],
+                                    safe_error(error), time.strftime("%H:%M", time.localtime(state["next"])))
+                        return {}
+                    wait = retry_after(error.headers.get("Retry-After")) if isinstance(error, urllib.error.HTTPError) else None
+                    wait = min(BACKOFF * 2 ** (state["refusals"] - 1) if wait is None else wait, MAX_BACKOFF)
+                    state["next"] = max(state["next"], time.time() + wait)
+                LOG.info("%s refused (%s): asking again in %.0f s", host, safe_error(error), wait)
+                continue
+            with self.hosts_lock:
+                state["refusals"] = 0
+            return answer
 
     def resolve(self, vid):
         with self.config_guard:
@@ -1213,15 +1289,19 @@ class Sync:
         LOG.info("pushed %d items: %s", len(items), {key: answer.get(key) for key in ("created", "updated", "removed")})
 
     def forever(self):
+        soon = 0
         while True:
             self.status = "syncing since %s" % time.strftime("%H:%M")
+            self.retry_soon = False
             try:
                 self.once()
             except Exception as error:
                 self.status = "failed: %s" % safe_error(error)
                 LOG.warning("sync: %s", safe_error(error))
+            # Titles an addon refused are asked again after retry_minutes, three passes running.
+            soon = soon + 1 if self.retry_soon and soon < 3 else 0
             with self.config_guard:
-                interval = self.config["interval_minutes"]
+                interval = self.config["retry_minutes"] if soon else self.config["interval_minutes"]
             self.wake.wait(interval * 60)
             self.wake.clear()
 

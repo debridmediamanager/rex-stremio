@@ -104,6 +104,8 @@ The page writes `config.json` (mode 600). You can also edit it yourself and rest
 | `cache` | `cache` | Where each title's stream check is kept |
 | `ffprobe` | `ffprobe` | The ffprobe to use |
 | `interval_minutes` | `360` | How often to sync |
+| `stream_interval_seconds` | `1` | The least time between two stream requests to one addon's host. Raise it for an addon that often answers 429 (Too Many Requests) |
+| `retry_minutes` | `10` | How soon the next sync runs when an addon turned titles away, instead of `interval_minutes` (three times at most, then the usual interval) |
 | `max_resolution` | any | `2160`, `1080` or `720`: no stream above it plays |
 | `max_size_gb` | any | No stream larger than this plays |
 | `collections` | `false` | Each catalog a collection in its library, and a title several catalogs of one library list there once. Needs a rex whose feed takes `collections` |
@@ -136,6 +138,13 @@ The page writes `config.json` (mode 600). You can also edit it yourself and rest
   another stream plays instead, it can differ (another codec or container) and that play can
   fail; rex-stremio then checks the new stream and tells rex at once, so the next play works.
 - Catalogs that need a question first (a search, a genre) are not listed.
+- A sync asks the stream addons about every title not yet checked, where Stremio asks only when a
+  title is opened, so an addon behind a rate limit (111477 allows about 3 requests in 10 seconds)
+  can turn titles away. rex-stremio asks each addon's host at most once per
+  `stream_interval_seconds`, waits as long as a 429 answer says (at most a minute) and asks again,
+  and treats an answer of `"streams": null` the same way. A host that refuses three times in a row
+  is not asked again until `retry_minutes` have passed, and the next sync runs then, so titles it
+  turned away come in over a few passes rather than six hours later.
 - Anyone who can reach `listen` can play through the relay. Keep it on `127.0.0.1` unless rex
   runs elsewhere. The settings page answers only this machine, your home network and Tailscale.
 - Addon links can hold your debrid key. Keep `config.json` to yourself.
@@ -148,7 +157,8 @@ REX_BIN=/path/to/rex python3 -m unittest discover -s tests   # also syncs into a
 ```
 
 The fixtures are real addons' answers (Cinemeta, Torrentio over Real-Debrid, DMM Cast, Public
-Domain Movies, and the live TV addons USA TV Next and PenguPlay) with keys removed.
+Domain Movies, and the live TV addons USA TV Next and PenguPlay) with keys removed, and 111477's
+answers behind its Cloudflare rate limit (429, error 1015).
 
 ## License
 

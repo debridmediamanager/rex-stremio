@@ -1,0 +1,40 @@
+{
+  "_": "111477 stremio (st.111477.xyz, base a.111477.xyz) behind Cloudflare's rate limit, captured 2026-11-04 07:38 UTC with curl as rex-stremio asks (User-Agent rex-stremio). GET /config/aHR0cHM6Ly9hLjExMTQ3Ny54eXov/stream/movie/tt0111161.json six times in 1 s: three 200s, then 429 from the 4th. Paced every 2 s: three 200s, then 429 with Retry-After 10, 8, 6, 4, 2 (the block's remaining seconds, the window is 10 s). Paced every 3.5 s: no 429, but from the 5th answer on {\"streams\": null} while the addon's own index is throttled, for minutes (a title it does not know answers {\"streams\": []}).",
+  "refused": {
+    "status": 429,
+    "headers": {
+      "date": "Wed, 04 Nov 2026 07:38:06 GMT",
+      "content-type": "text/plain; charset=UTF-8",
+      "content-length": "17",
+      "retry-after": "10",
+      "cache-control": "private, max-age=0, no-store, no-cache, must-revalidate, post-check=0, pre-check=0",
+      "expires": "Thu, 01 Jan 1970 00:00:01 GMT",
+      "referrer-policy": "same-origin",
+      "x-frame-options": "SAMEORIGIN",
+      "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=ec1%2Fqr0YPe0uYLFCg38ns6hhdwIM%2FdLwXmaJtkZ6WkmY8BmNz7gKBanv%2B4OJ4cTDfhviXjoCpWvuuYxHViW1ginxXhOS7BlNNqApv%2FIovaYpr7TslBaplrl2xVnxPHLk\"}]}",
+      "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+      "server": "cloudflare",
+      "cf-ray": "a551f50db9f61550-TXL",
+      "alt-svc": "h3=\":443\"; ma=86400"
+    },
+    "body": "error code: 1015\n"
+  },
+  "answered": {
+    "streams": [
+      {
+        "title": "The.Shawshank.Redemption.1994.Remastered.2160p.BluRay.x265.10bit.DTS-WiKi.mkv [a11 26.0 GB]",
+        "url": "https://strem1o.xn1nazihva.workers.dev/d/581bf3db9d6712b86219a3278815d58b"
+      },
+      {
+        "title": "The Shawshank Redemption (1994) REMUX (AVC DTSHD-MA) - FiNAL.mkv [a11 29.3 GB]",
+        "url": "https://strem1o.xn1nazihva.workers.dev/d/19c0211da8bfe4cf1fb330f4ffba2cc0"
+      }
+    ]
+  },
+  "throttled": {
+    "streams": null
+  },
+  "unknown": {
+    "streams": []
+  }
+}
