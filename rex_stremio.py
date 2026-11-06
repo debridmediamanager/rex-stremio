@@ -62,6 +62,7 @@ DEFAULTS = {
     "max_size_gb": None,
     "probe_workers": 4,
     "dmm_api_key": None,
+    "share_probes": True,
     "addons": [],
     "catalogs": [],
 }
@@ -92,6 +93,11 @@ REX_KINDS = {"movie": "movies", "series": "shows", "tv": "movies"}
 # keys: at most 100 hashes an ask and 25 asks a minute from one address. Of Torrentio's 246 releases
 # of The Matrix it held 83, and 9 of the 10 it ranks first (2026-11-06).
 DMM_MEDIAINFO = "https://debridmediamanager.com/api/sponsor/mediainfo"
+# What rex-stremio probes of a torrent's file itself goes back to DMM, so the next sponsor skips it:
+# up to SHARE_BATCH probes (and SHARE_BYTES) a request, spaced as lookups are.
+DMM_PROBES = "https://debridmediamanager.com/api/sponsor/probes"
+SHARE_BATCH = 50
+SHARE_BYTES = 6 << 20
 DMM_BATCH = 100
 DMM_SPACING = 60 / 25
 DMM_GATHER = 0.5  # how long the first ask waits for other workers' hashes to join it
@@ -445,11 +451,58 @@ class StoredProbes:
     DMM_SPACING apart. A hash DMM does not hold, or any failure, answers None: that item is
     probed. A refused key (401) is not used again until the key changes."""
 
-    def __init__(self, key, url=None):
-        self.key, self.url = key, url or DMM_MEDIAINFO
+    def __init__(self, key, url=None, probes_url=None):
+        self.key, self.url, self.probes_url = key, url or DMM_MEDIAINFO, probes_url or DMM_PROBES
         self.condition = threading.Condition()
         self.known, self.pending, self.inflight = {}, [], set()
         self.asking, self.refused, self.next_ask = False, False, 0.0
+        # Probes to share (`share`), sent by `flush`.
+        self.outbox, self.outbox_lock, self.next_share = [], threading.Lock(), 0.0
+
+    def share(self, probe):
+        """Queue a probe of a torrent's file for DMM: {"hash", "bytes", "name"?, "MediaInfo"}."""
+        with self.outbox_lock:
+            if not self.refused:
+                self.outbox.append(probe)
+
+    def flush(self, final=False):
+        """Send what is queued in batches of SHARE_BATCH, or all of it when `final`. A batch DMM refuses
+        is dropped: those files are probed again by whoever meets them next. Answers how many went."""
+        sent = 0
+        while True:
+            with self.outbox_lock:
+                if self.refused or not self.outbox or (len(self.outbox) < SHARE_BATCH and not final):
+                    return sent
+                batch, size = [], 0
+                while self.outbox and len(batch) < SHARE_BATCH:
+                    one = len(json.dumps(self.outbox[0]))
+                    if batch and size + one > SHARE_BYTES:
+                        break
+                    batch.append(self.outbox.pop(0))
+                    size += one
+                wait = self.next_share - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            request = urllib.request.Request(self.probes_url, data=json.dumps({"probes": batch}).encode(), method="POST",
+                                             headers={"Content-Type": "application/json", "Accept": "application/json",
+                                                      "User-Agent": "rex-stremio", "x-api-key": self.key})
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    answer = response_json(response)
+                sent += len(batch)
+                LOG.info("shared %d probes with DMM: %s new", len(batch), answer.get("saved") if isinstance(answer, dict) else "?")
+                for rejected in (answer.get("rejected") or []) if isinstance(answer, dict) else []:
+                    LOG.info("DMM refused a probe: %s", safe_error(rejected.get("error") if isinstance(rejected, dict) else rejected))
+            except urllib.error.HTTPError as error:
+                if error.code == 401:
+                    with self.condition:
+                        self.refused = True
+                    LOG.warning("DMM refused dmm_api_key (sponsors only): probing every item")
+                else:
+                    LOG.info("sharing probes with DMM: %s", safe_error(error))
+            except Exception as error:
+                LOG.info("sharing probes with DMM: %s", safe_error(error))
+            self.next_share = time.time() + DMM_SPACING
 
     def release(self, hash_, timeout=120):
         deadline = time.time() + timeout
@@ -598,6 +651,8 @@ def load_config(path):
         if not isinstance(config["dmm_api_key"], str):
             raise ValueError("dmm_api_key must be a key or null")
         config["dmm_api_key"] = config["dmm_api_key"].strip() or None
+    if not isinstance(config.get("share_probes"), bool):
+        raise ValueError("share_probes must be true or false")
     if config["cache"] and not os.path.isabs(config["cache"]):
         config["cache"] = os.path.join(os.path.dirname(os.path.abspath(path)), config["cache"])
     if not config["relay_url"]:
@@ -1176,6 +1231,33 @@ class Sync:
         except (AttributeError, OSError, ValueError, TypeError):
             return None
 
+    def dmm_for(self, key):
+        """The DMM client for this sponsor key, made when the key is first used or changes."""
+        with self.guard:
+            if self.dmm is None or self.dmm.key != key:
+                self.dmm = StoredProbes(key)
+            return self.dmm
+
+    def share(self, vid, probe, config):
+        """Queue the probe ffprobe took of a torrent's file for DMM (`dmm_api_key` set), so the next sponsor to
+        meet that file skips it. Only a file's probe that names its size: a playlist's size is the playlist's. The probe is
+        answered as it is either way; sharing never fails it."""
+        key = config.get("dmm_api_key")
+        try:
+            with self.guard:
+                stream = self.picked.get(vid)
+            hash_ = info_hash(stream)
+            size = str((probe.get("format") or {}).get("size") or "")
+            if key and config.get("share_probes", True) and hash_ and size.isdigit() and int(size) > 0 and probe["format"].get("format_name") != "hls":
+                hints = stream.get("behaviorHints") if isinstance(stream.get("behaviorHints"), dict) else {}
+                shared = {"hash": hash_, "bytes": int(size), "MediaInfo": dict(probe, format={k: v for k, v in probe["format"].items() if k != "filename"})}
+                if isinstance(hints.get("filename"), str) and hints["filename"]:
+                    shared["name"] = hints["filename"]
+                self.dmm_for(key).share(shared)
+        except Exception as error:  # a probe is never lost to sharing it
+            LOG.info("%s: not shared with DMM: %s", vid, safe_error(error))
+        return probe
+
     def stored(self, vid, config, version=None):
         """DMM's stored probe of the file this item plays, when it is a torrent's and DMM holds it:
         matched by the torrent's hash, the exact size the link serves and, when the stream names
@@ -1187,11 +1269,9 @@ class Sync:
             url = self._resolve(vid, config, version)
         except Exception:
             return None  # the probe tries the streams again and says why none opens
+        dmm = self.dmm_for(key)
         with self.guard:
             stream, headers = self.picked.get(vid), self.via.get(vid) or {}
-            if self.dmm is None or self.dmm.key != key:
-                self.dmm = StoredProbes(key)
-            dmm = self.dmm
         hash_ = info_hash(stream)
         if not hash_:
             return None
@@ -1335,8 +1415,12 @@ class Sync:
                 if ready and (len(batch) >= READY_BATCH or time.time() - pushed_at >= READY_SECONDS):
                     ready(batch)
                     batch, pushed_at = [], time.time()
+                if self.dmm:
+                    self.dmm.flush()
         if ready and batch:
             ready(batch)
+        if self.dmm:
+            self.dmm.flush(final=True)
         items = [item for item in items if item is not None]
         LOG.info("%s: %d of %d ready", safe_url(catalog["url"]), len(items), len(wanted))
         self.catalog_incomplete = not complete
@@ -1387,7 +1471,7 @@ class Sync:
             for attempt in range(2):
                 had_cache = os.path.isfile(probe_path)
                 try:
-                    probe = self.cached(PROBES, vid, lambda: self.stored(vid, config, version) or self.probe(vid, catalog, config),
+                    probe = self.cached(PROBES, vid, lambda: self.stored(vid, config, version) or self.share(vid, self.probe(vid, catalog, config), config),
                                         config, version)
                 except Exception as error:  # no stream that opens, or one ffprobe could not read
                     complete = False
@@ -1648,7 +1732,7 @@ button.plain{background:transparent;color:var(--accent)}form.inline{display:inli
 <h2>rex</h2>
 <div class="row"><label for="rex">rex's address</label><input id="rex" type="url" name="rex_url" value="%(rex_url)s" required style="flex:1;min-width:220px"></div>
 <h2>DMM</h2>
-<p class="muted">With a DMM sponsor's API key, a title DMM has seen before skips its ffprobe: it shows in rex in seconds. Others are probed as before.</p>
+<p class="muted">With a DMM sponsor's API key, a title DMM has seen before skips its ffprobe: it shows in rex in seconds. Others are probed as before, and what ffprobe read of a torrent's file (its hash, size, name and streams) goes back to DMM for the next sponsor.</p>
 <div class="row"><label for="dmm">DMM API key</label><input id="dmm" type="password" name="dmm_api_key" autocomplete="off" placeholder="%(dmm_placeholder)s" style="flex:1;min-width:220px">
 <input type="checkbox" id="dmm-forget" name="dmm_forget" value="1"><label for="dmm-forget">Forget the key</label></div>
 <p style="margin-top:20px"><button>Save and sync</button></p>

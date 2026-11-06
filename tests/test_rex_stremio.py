@@ -1368,9 +1368,10 @@ TIGOLE, IAMABLE = "12f8ca9709b357477612aaac7c6703503c410352", "03dd34fea0ff15a45
 SIZES = {TIGOLE: 15237850498, IAMABLE: 37675795874}  # the files the two releases' links serve
 
 
-def dmm_host(test, known, key="sponsor-key"):
+def dmm_host(test, known, key="sponsor-key", shared=None):
     """DMM's /api/sponsor/mediainfo over `known` releases: 401 for another key, each answer a
-    subset of the hashes asked. Returns its URL and the hash lists it was asked, in order."""
+    subset of the hashes asked. Returns its URL and the hash lists it was asked, in order. Probes
+    posted to /api/sponsor/probes go into `shared`, a list, as (time, probes)."""
     asked = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -1381,6 +1382,9 @@ def dmm_host(test, known, key="sponsor-key"):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.headers.get("x-api-key") != key:
                 raw, status = b'{"error":"Invalid API key"}', 401
+            elif self.path.endswith("/probes"):
+                (shared if shared is not None else []).append((time.monotonic(), body["probes"]))
+                raw, status = json.dumps({"saved": len(body["probes"]), "known": 0}).encode(), 200
             else:
                 asked.append((time.monotonic(), body["hashes"]))
                 raw, status = json.dumps({"releases": {h: known[h] for h in body["hashes"] if h in known}}).encode(), 200
@@ -1464,8 +1468,8 @@ class StoredProbes(unittest.TestCase):
         self.assertIsNone(dmm.release(IAMABLE))
         self.assertEqual(asked, [])
 
-    def sync_matrix(self, streams, key="sponsor-key", known=MATRIX_DMM):
-        url, asked = dmm_host(self, known)
+    def sync_matrix(self, streams, key="sponsor-key", known=MATRIX_DMM, fallback="probe-top-films-tt6262770.json", shared=None):
+        url, asked = dmm_host(self, known, shared=shared)
         links = size_host(self)
         streams = [dict(stream, url=stream["url"].replace("https://torrentio.strem.fun", links)) for stream in streams]
         config = rex_stremio.load_config(config_file(self, {
@@ -1473,9 +1477,10 @@ class StoredProbes(unittest.TestCase):
             "catalogs": [{"url": "https://a/catalog/movie/top.json", "title": "Films"}]}))
         sync = rex_stremio.Sync(config)
         probed = []
-        fallback = read_json(os.path.join(FIXTURES, "probe-top-films-tt6262770.json"))
+        fallback = read_json(os.path.join(FIXTURES, fallback))
         metas = {"metas": [{"id": "tt0133093", "type": "movie", "name": "The Matrix"}]}
         with unittest.mock.patch.object(rex_stremio, "DMM_MEDIAINFO", url), \
+                unittest.mock.patch.object(rex_stremio, "DMM_PROBES", url.replace("/mediainfo", "/probes")), \
                 unittest.mock.patch.object(rex_stremio, "get_json", lambda *args, **kwargs: metas), \
                 unittest.mock.patch.object(rex_stremio, "opens", lambda link, headers=None: link), \
                 unittest.mock.patch.object(rex_stremio.Sync, "streams", lambda *args, **kwargs: streams), \
@@ -1499,6 +1504,60 @@ class StoredProbes(unittest.TestCase):
         items, probed, asked = self.sync_matrix([MATRIX[1]], known={})
         self.assertEqual((probed, [batch for _, batch in asked]), (["films-tt0133093"], [[TIGOLE]]))
         self.assertEqual(items[0]["media_info"]["format"]["format_name"], "hls")
+
+    def test_a_probe_ffprobe_took_goes_back_to_dmm(self):
+        # A Torrentio-over-RD episode file's real probe (Matroska), for a release DMM did not know.
+        shared = []
+        items, probed, _ = self.sync_matrix([MATRIX[0]], known={}, fallback="probe-top-shows-tt11540908-1-1.json", shared=shared)
+        self.assertEqual(probed, ["films-tt0133093"])
+        [(_, probes)] = shared
+        probe = read_json(os.path.join(FIXTURES, "probe-top-shows-tt11540908-1-1.json"))
+        self.assertEqual(probes, [{"hash": IAMABLE, "bytes": int(probe["format"]["size"]),
+                                   "name": "The.Matrix.1999.RERIP.2160p.UHD.BluRay.X265-IAMABLE.mkv",
+                                   "MediaInfo": dict(probe, format={k: v for k, v in probe["format"].items() if k != "filename"})}])
+        self.assertNotIn("filename", probes[0]["MediaInfo"]["format"])  # the relay address stays here
+        self.assertEqual(items[0]["media_info"], probe)  # and the item went to rex as before
+
+    def test_a_link_without_a_file_name_is_shared_by_its_size_alone(self):
+        shared = []
+        self.sync_matrix([MATRIX[1]], known={}, fallback="probe-top-shows-tt11540908-1-1.json", shared=shared)
+        self.assertEqual([(p["hash"], "name" in p) for _, batch in shared for p in batch], [(TIGOLE, False)])
+
+    def test_what_dmm_knew_is_not_sent_back(self):
+        shared = []
+        self.sync_matrix([MATRIX[1]], shared=shared)
+        self.assertEqual(shared, [])
+
+    def test_share_probes_off_keeps_probes_here(self):
+        shared = []
+        with unittest.mock.patch.dict(rex_stremio.DEFAULTS, {"share_probes": False}):
+            self.sync_matrix([MATRIX[0]], known={}, fallback="probe-top-shows-tt11540908-1-1.json", shared=shared)
+        self.assertEqual(shared, [])
+
+    def test_a_playlist_probe_is_not_shared(self):
+        # An HLS probe's format.size is the playlist's, not a file's.
+        shared = []
+        self.sync_matrix([MATRIX[1]], known={}, shared=shared)
+        self.assertEqual(shared, [])
+
+    def test_shared_probes_go_in_batches_spaced_and_stop_at_a_refused_key(self):
+        shared = []
+        url, _ = dmm_host(self, {}, shared=shared)
+        dmm = rex_stremio.StoredProbes("sponsor-key", url, url.replace("/mediainfo", "/probes"))
+        probe = {"hash": TIGOLE, "bytes": 1, "MediaInfo": {"format": {"format_name": "matroska,webm"}, "streams": []}}
+        with unittest.mock.patch.object(rex_stremio, "SHARE_BATCH", 2), unittest.mock.patch.object(rex_stremio, "DMM_SPACING", 0.3):
+            for n in range(5):
+                dmm.share(dict(probe, bytes=n + 1))
+            self.assertEqual(dmm.flush(), 4)  # full batches only while a sync goes on
+            self.assertEqual(dmm.flush(final=True), 1)  # the rest when its catalog is done
+        self.assertEqual([[p["bytes"] for p in batch] for _, batch in shared], [[1, 2], [3, 4], [5]])
+        self.assertGreaterEqual(min(b[0] - a[0] for a, b in zip(shared, shared[1:])), 0.29)
+        lapsed = rex_stremio.StoredProbes("lapsed", url, url.replace("/mediainfo", "/probes"))
+        lapsed.share(probe)
+        self.assertEqual(lapsed.flush(final=True), 0)
+        self.assertTrue(lapsed.refused)
+        lapsed.share(probe)
+        self.assertEqual(lapsed.outbox, [])  # nothing is queued for a key DMM refused
 
     def test_without_a_key_nothing_is_asked(self):
         items, probed, asked = self.sync_matrix([MATRIX[1]], key=None)

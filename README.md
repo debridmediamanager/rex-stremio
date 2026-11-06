@@ -108,7 +108,8 @@ The page writes `config.json` (mode 600). You can also edit it yourself and rest
 | `interval_minutes` | `360` | How often to sync |
 | `stream_interval_seconds` | `1` | The least time between two stream requests to one addon's host. Raise it for an addon that often answers 429 (Too Many Requests) |
 | `probe_workers` | `4` | How many titles are checked at once (1 to 16). Requests to one addon's host still keep `stream_interval_seconds` apart |
-| `dmm_api_key` | none | A DMM sponsor's API key. A torrent stream whose file DMM holds a probe of (same torrent, same size, and same name when the addon names the file) takes that probe instead of running ffprobe. Anything else is probed |
+| `dmm_api_key` | none | A DMM sponsor's API key. A torrent stream whose file DMM holds a probe of (same torrent, same size, and same name when the addon names the file) takes that probe instead of running ffprobe. Anything else is probed, and what ffprobe read of a torrent's file (its hash, size, name and streams, never the link) goes back to DMM, so the next sponsor skips it |
+| `share_probes` | `true` | `false` keeps the probes rex-stremio takes to itself; DMM's are still used |
 | `retry_minutes` | `10` | How soon the next sync runs when an addon turned titles away, instead of `interval_minutes` (three times at most, then the usual interval) |
 | `max_resolution` | any | `2160`, `1080` or `720`: no stream above it plays |
 | `max_size_gb` | any | No stream larger than this plays |
