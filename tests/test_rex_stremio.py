@@ -1431,7 +1431,8 @@ class AgainstRex(unittest.TestCase):
         # The live TV addon's channels: a library of their own, named by the addon. CW has no
         # stream, so it is left out (and the sync is partial, keeping rows it cannot see).
         channels = self.get("/library/sections/%s/all" % sections["Live TV"]["key"])["MediaContainer"]["Metadata"]
-        self.assertEqual([(channel["title"], channel["duration"]) for channel in channels], [("ABC", 0)])
+        # No duration: 0, or left out, as rex leaves out every empty field (nightly 2026.11.05).
+        self.assertEqual([(channel["title"], channel.get("duration", 0)) for channel in channels], [("ABC", 0)])
         self.assertEqual(sections["Live TV"]["type"], "movie")
         # At play the relay asks every stream addon again and redirects to the pinned stream.
         opener = urllib.request.build_opener(NoRedirect)
