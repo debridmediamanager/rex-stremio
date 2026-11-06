@@ -1505,6 +1505,40 @@ class StoredProbes(unittest.TestCase):
         self.assertEqual((probed, asked), (["films-tt0133093"], []))
 
 
+class FlakyHost(unittest.TestCase):
+    """A host that answers one read with a 5xx (archive.org did, 1 of 99 ffprobe reads, 2026-11-06)
+    must not cost the title a day: the stream used to be set aside as unreadable."""
+
+    def probe_with(self, **env):
+        state = tempfile.mktemp(prefix="rex-stremio-flaky-")
+        self.addCleanup(lambda: os.path.exists(state) and os.unlink(state))
+        config = rex_stremio.load_config(config_file(self, {"cache": tempfile.mkdtemp(prefix="rex-stremio-"),
+                                                            "ffprobe": os.path.join(HERE, "flaky_ffprobe.py")}))
+        sync = rex_stremio.Sync(config)
+        catalog = {"directory": "films", "slug": "films"}
+        with unittest.mock.patch.dict(os.environ, dict(env, FLAKY_STATE=state)), \
+                unittest.mock.patch.object(rex_stremio, "PROBE_RETRY_SECONDS", 0, create=True):
+            try:
+                return sync.probe("films-tt6262770", catalog, config), read_json_lines(state)
+            except RuntimeError as error:
+                return error, read_json_lines(state)
+
+    def test_a_5xx_is_asked_again_before_the_stream_is_given_up(self):
+        probe, runs = self.probe_with()
+        self.assertIsInstance(probe, dict)
+        self.assertEqual(runs, 2)
+
+    def test_a_file_ffprobe_cannot_read_fails_at_once(self):
+        error, runs = self.probe_with(FLAKY_ERROR="Invalid data found when processing input")
+        self.assertIsInstance(error, RuntimeError)
+        self.assertEqual(runs, 1)
+
+
+def read_json_lines(path):
+    with open(path) as handle:
+        return len(handle.readlines())
+
+
 class ParallelProbes(unittest.TestCase):
     def test_items_are_probed_together_and_reach_rex_as_they_are_ready(self):
         config = rex_stremio.load_config(config_file(self, {

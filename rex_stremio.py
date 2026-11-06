@@ -101,6 +101,9 @@ DMM_GATHER = 0.5  # how long the first ask waits for other workers' hashes to jo
 READY_BATCH = 20
 READY_SECONDS = 5
 
+# How long a probe a host answered with a 5xx waits before it is run once more.
+PROBE_RETRY_SECONDS = 3
+
 # A stream addon's host is asked at most once per `stream_interval_seconds`. One that refuses (429,
 # or `{"streams": null}`) is asked again after its Retry-After, else BACKOFF doubling, at most
 # MAX_BACKOFF; after REFUSALS in a row, not before `retry_minutes`. 111477's Cloudflare limit
@@ -1202,11 +1205,19 @@ class Sync:
     def probe(self, vid, catalog, config=None):
         config = self.config if config is None else config
         url = rex_endpoint(config["relay_url"], "/%s/%s/%s.stream" % (catalog["directory"], catalog["slug"], vid))
-        out = subprocess.run([config["ffprobe"], "-v", "error", *lenient_hls(config["ffprobe"]), "-print_format", "json",
-                              "-show_format", "-show_streams", "-show_chapters", url], capture_output=True, timeout=300)
-        if out.returncode != 0:
-            raise RuntimeError(out.stderr.decode(errors="replace").strip()[-300:] or "ffprobe failed")
-        return json.loads(out.stdout)
+        for attempt in range(2):
+            out = subprocess.run([config["ffprobe"], "-v", "error", *lenient_hls(config["ffprobe"]), "-print_format", "json",
+                                  "-show_format", "-show_streams", "-show_chapters", url], capture_output=True, timeout=300)
+            if out.returncode == 0:
+                return json.loads(out.stdout)
+            error = out.stderr.decode(errors="replace").strip()[-300:] or "ffprobe failed"
+            # A host's 5xx is its own hiccup, not a file ffprobe cannot read: asked once more, or the
+            # stream would be set aside for a day (archive.org answered 1 of 99 reads so, 2026-11-06).
+            # ponytail: only ffprobe's 5xx message is retried; add timeouts/resets once seen failing.
+            if attempt or "Server returned 5XX" not in error:
+                raise RuntimeError(error)
+            LOG.info("%s: %s; asking again", vid, error)
+            time.sleep(PROBE_RETRY_SECONDS)
 
     def catalog_items(self, catalog, config=None, version=None, ready=None):
         """A catalog's films, or its series' episodes (Cinemeta's list of them), pushed by their
