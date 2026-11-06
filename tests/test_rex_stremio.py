@@ -751,6 +751,8 @@ class Settings(unittest.TestCase):
         self.assertEqual(read_json(self.path)["dmm_api_key"], "secret-sponsor-key")
         self.assertNotIn("secret-sponsor-key", page)
         self.assertIn("saved; type a new one to replace it", page)
+        # Styled as the page's other fields, not the browser's white box on the dark page.
+        self.assertRegex(page, r"input\[type=password\][^{]*\{[^}]*border-radius")
         self.post("/settings", dict(form, dmm_api_key=""))
         self.assertEqual(read_json(self.path)["dmm_api_key"], "secret-sponsor-key")
         self.post("/settings", dict(form, dmm_api_key="", dmm_forget="1"))
