@@ -29,6 +29,7 @@ import json
 import logging
 import math
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -37,7 +38,7 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOG = logging.getLogger("rex-stremio")
@@ -59,6 +60,8 @@ DEFAULTS = {
     "max_resolution": None,
     "collections": False,
     "max_size_gb": None,
+    "probe_workers": 4,
+    "dmm_api_key": None,
     "addons": [],
     "catalogs": [],
 }
@@ -84,6 +87,19 @@ RESOLUTIONS = [(r"2160p|\b4k\b|\buhd\b", 2160), (r"1440p", 1440), (r"1080p|\bfhd
 LIBRARIES = {"movie": "Stremio Films", "series": "Stremio Shows", "tv": "Live TV"}
 REX_KINDS = {"movie": "movies", "series": "shows", "tv": "movies"}
 
+
+# The ffprobe output DMM holds per torrent, file by file (path, bytes, MediaInfo), for its sponsors'
+# keys: at most 100 hashes an ask and 25 asks a minute from one address. Of Torrentio's 246 releases
+# of The Matrix it held 83, and 9 of the 10 it ranks first (2026-11-06).
+DMM_MEDIAINFO = "https://debridmediamanager.com/api/sponsor/mediainfo"
+DMM_BATCH = 100
+DMM_SPACING = 60 / 25
+DMM_GATHER = 0.5  # how long the first ask waits for other workers' hashes to join it
+
+# Items reach rex as they are ready: in batches of READY_BATCH, or whatever is ready every
+# READY_SECONDS, whichever comes first.
+READY_BATCH = 20
+READY_SECONDS = 5
 
 # A stream addon's host is asked at most once per `stream_interval_seconds`. One that refuses (429,
 # or `{"streams": null}`) is asked again after its Retry-After, else BACKOFF doubling, at most
@@ -378,6 +394,132 @@ def opens(url, headers=None):
         return None
 
 
+def info_hash(stream):
+    """A torrent stream's info hash: its `infoHash`, else the one its link's path carries
+    (Torrentio's debrid links are `/resolve/<provider>/<key>/<hash>/<file>/<name>`, 2026-11-06)."""
+    if not isinstance(stream, dict):
+        return None
+    named = stream.get("infoHash")
+    if isinstance(named, str) and re.fullmatch(r"[0-9a-fA-F]{40}", named):
+        return named.lower()
+    path = urllib.parse.urlsplit(stream["url"]).path if isinstance(stream.get("url"), str) else ""
+    found = re.search(r"(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])", path)
+    return found[0].lower() if found else None
+
+
+def served_size(url, headers=None):
+    """The size of the file a link serves, as its answer to a one-byte Range names it."""
+    request = urllib.request.Request(url, headers=dict({"User-Agent": "rex-stremio"}, **(headers or {}), Range="bytes=0-0"))
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            total = re.search(r"/(\d+)$", response.headers.get("Content-Range") or "")
+            return int(total[1]) if total else None
+    except Exception as error:
+        LOG.info("%s: %s", safe_url(url), safe_error(error))
+        return None
+
+
+def stored_probe(release, size, filename=None):
+    """DMM's probe of the file of exactly `size` bytes in a release (and of that name, when the
+    stream names its file); None unless exactly one file fits. A pack's episodes differ in size,
+    and a size alone can be shared (a DVD's VOBs), so two files that fit are no answer."""
+    files = (release or {}).get("files") if isinstance(release, dict) else None
+    if not size or not isinstance(files, dict):
+        return None
+    fits = [entry for entry in files.values() if isinstance(entry, dict) and entry.get("bytes") == size
+            and isinstance(entry.get("MediaInfo"), dict) and isinstance(entry["MediaInfo"].get("format"), dict)
+            and (not filename or posixpath.basename(str(entry.get("path") or "")) == filename)]
+    if len(fits) != 1:
+        return None
+    probe = copy.deepcopy(fits[0]["MediaInfo"])
+    probe["format"].setdefault("size", str(size))
+    return probe
+
+
+class StoredProbes:
+    """DMM's stored probes for one sponsor key. Workers ask for one hash each; the first to ask
+    waits DMM_GATHER for the others, then sends up to DMM_BATCH hashes in one request, spaced
+    DMM_SPACING apart. A hash DMM does not hold, or any failure, answers None: that item is
+    probed. A refused key (401) is not used again until the key changes."""
+
+    def __init__(self, key, url=None):
+        self.key, self.url = key, url or DMM_MEDIAINFO
+        self.condition = threading.Condition()
+        self.known, self.pending, self.inflight = {}, [], set()
+        self.asking, self.refused, self.next_ask = False, False, 0.0
+
+    def release(self, hash_, timeout=120):
+        deadline = time.time() + timeout
+        with self.condition:
+            while True:
+                if self.refused:
+                    return None
+                if hash_ in self.known:
+                    return self.known[hash_]
+                if hash_ not in self.pending and hash_ not in self.inflight:
+                    self.pending.append(hash_)
+                if not self.asking:  # nobody is asking: this worker asks for everyone waiting
+                    self.asking = True
+                    break
+                left = deadline - time.time()
+                if left <= 0:
+                    return None
+                self.condition.wait(left)
+        self.ask_all()
+        with self.condition:
+            return self.known.get(hash_)
+
+    def ask_all(self):
+        """Ask until nothing is pending. The last look at `pending` and giving up the asking are
+        one step under the lock, so a hash added meanwhile finds nobody asking and asks itself."""
+        try:
+            time.sleep(DMM_GATHER)
+            while True:
+                with self.condition:
+                    batch, self.pending = self.pending[:DMM_BATCH], self.pending[DMM_BATCH:]
+                    if not batch or self.refused:
+                        self.asking = False
+                        self.condition.notify_all()
+                        return
+                    self.inflight.update(batch)
+                    wait = self.next_ask - time.time()
+                if wait > 0:
+                    time.sleep(wait)
+                releases = self.ask(batch)
+                with self.condition:
+                    self.next_ask = time.time() + DMM_SPACING
+                    for hash_ in batch:
+                        self.known[hash_] = releases.get(hash_)
+                    self.inflight.difference_update(batch)
+                    self.condition.notify_all()
+        except BaseException:
+            with self.condition:
+                self.asking = False
+                self.inflight.clear()
+                self.condition.notify_all()
+            raise
+
+    def ask(self, batch):
+        request = urllib.request.Request(self.url, data=json.dumps({"hashes": batch}).encode(), method="POST",
+                                         headers={"Content-Type": "application/json", "Accept": "application/json",
+                                                  "User-Agent": "rex-stremio", "x-api-key": self.key})
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                answer = response_json(response)
+            releases = answer.get("releases") if isinstance(answer, dict) else None
+            return releases if isinstance(releases, dict) else {}
+        except urllib.error.HTTPError as error:
+            if error.code == 401:
+                with self.condition:
+                    self.refused = True
+                LOG.warning("DMM refused dmm_api_key (sponsors only): probing every item")
+            else:
+                LOG.info("DMM stored probes: %s", safe_error(error))
+        except Exception as error:
+            LOG.info("DMM stored probes: %s", safe_error(error))
+        return {}
+
+
 def load_config(path):
     with open(path) as handle:
         raw = json.load(handle)
@@ -443,6 +585,16 @@ def load_config(path):
             raise ValueError("max_size_gb must be positive")
     if not isinstance(config.get("collections"), bool):
         raise ValueError("collections must be true or false")
+    try:
+        config["probe_workers"] = int(config.get("probe_workers"))
+    except (TypeError, ValueError):
+        raise ValueError("probe_workers must be 1 to 16")
+    if not 1 <= config["probe_workers"] <= 16:
+        raise ValueError("probe_workers must be 1 to 16")
+    if config.get("dmm_api_key") is not None:
+        if not isinstance(config["dmm_api_key"], str):
+            raise ValueError("dmm_api_key must be a key or null")
+        config["dmm_api_key"] = config["dmm_api_key"].strip() or None
     if config["cache"] and not os.path.isabs(config["cache"]):
         config["cache"] = os.path.join(os.path.dirname(os.path.abspath(path)), config["cache"])
     if not config["relay_url"]:
@@ -645,6 +797,9 @@ class Sync:
         # Each stream addon host's pacing: when it may be asked next and its refusals in a row.
         # `retry_soon`: a host refused during this pass, so the next one comes after retry_minutes.
         self.hosts, self.hosts_lock, self.retry_soon = {}, threading.Lock(), False
+        # The stream each item last resolved to (`_resolve`), for its torrent's hash, and DMM's
+        # stored probes for the configured key (`stored`).
+        self.picked, self.dmm = {}, None
 
     def path(self, kind, vid, config=None, version=None):
         config = self.config if config is None else config
@@ -899,7 +1054,14 @@ class Sync:
                     return {}
                 start = max(now, state["next"])
                 state["next"] = start + config["stream_interval_seconds"]
+                booked = state.get("refused", 0)
             time.sleep(start - now)
+            with self.hosts_lock:
+                # Items are asked for in parallel (`probe_workers`): an ask that took its turn before
+                # a refusal takes a new turn after it, or the asks already queued would each be
+                # refused and the host given up for the pass at once.
+                if state.get("refused", 0) != booked:
+                    continue
             try:
                 answer = get_json(url, 30)
                 if isinstance(answer, dict) and "streams" in answer and not isinstance(answer["streams"], list):
@@ -912,12 +1074,14 @@ class Sync:
                     state["refusals"] += 1
                     if state["refusals"] >= REFUSALS:
                         state["next"] = time.time() + config["retry_minutes"] * 60
+                        state["refused"] = state.get("refused", 0) + 1
                         LOG.warning("%s refused %d times in a row (%s): not asked again before %s", host, state["refusals"],
                                     safe_error(error), time.strftime("%H:%M", time.localtime(state["next"])))
                         return {}
                     wait = retry_after(error.headers.get("Retry-After")) if isinstance(error, urllib.error.HTTPError) else None
                     wait = min(BACKOFF * 2 ** (state["refusals"] - 1) if wait is None else wait, MAX_BACKOFF)
-                    state["next"] = max(state["next"], time.time() + wait)
+                    state["next"] = time.time() + wait  # turns taken before now are taken again
+                    state["refused"] = state.get("refused", 0) + 1
                 LOG.info("%s refused (%s): asking again in %.0f s", host, safe_error(error), wait)
                 continue
             with self.hosts_lock:
@@ -967,6 +1131,8 @@ class Sync:
                     self.wake.set()
                 self.store_cache(version, vid, (url, max(time.time(), min(expiry(stream["url"]), expiry(url)) - 3600)),
                                  request_headers(stream))
+                with self.guard:
+                    self.picked[vid] = stream
                 return url
             raise RuntimeError("no stream addon has a stream that opens")
 
@@ -1007,6 +1173,32 @@ class Sync:
         except (AttributeError, OSError, ValueError, TypeError):
             return None
 
+    def stored(self, vid, config, version=None):
+        """DMM's stored probe of the file this item plays, when it is a torrent's and DMM holds it:
+        matched by the torrent's hash, the exact size the link serves and, when the stream names
+        it, the file's name. None otherwise, and the item is probed."""
+        key = config.get("dmm_api_key")
+        if not key:
+            return None
+        try:
+            url = self._resolve(vid, config, version)
+        except Exception:
+            return None  # the probe tries the streams again and says why none opens
+        with self.guard:
+            stream, headers = self.picked.get(vid), self.via.get(vid) or {}
+            if self.dmm is None or self.dmm.key != key:
+                self.dmm = StoredProbes(key)
+            dmm = self.dmm
+        hash_ = info_hash(stream)
+        if not hash_:
+            return None
+        hints = stream.get("behaviorHints") if isinstance(stream.get("behaviorHints"), dict) else {}
+        filename = hints.get("filename") if isinstance(hints.get("filename"), str) else None
+        probe = stored_probe(dmm.release(hash_), served_size(url, headers), filename)
+        if probe:
+            LOG.info("%s: DMM's stored probe of %s", vid, hash_)
+        return probe
+
     def probe(self, vid, catalog, config=None):
         config = self.config if config is None else config
         url = rex_endpoint(config["relay_url"], "/%s/%s/%s.stream" % (catalog["directory"], catalog["slug"], vid))
@@ -1016,7 +1208,7 @@ class Sync:
             raise RuntimeError(out.stderr.decode(errors="replace").strip()[-300:] or "ffprobe failed")
         return json.loads(out.stdout)
 
-    def catalog_items(self, catalog, config=None, version=None):
+    def catalog_items(self, catalog, config=None, version=None, ready=None):
         """A catalog's films, or its series' episodes (Cinemeta's list of them), pushed by their
         IMDb ids so Plex names them; the catalog's own names and pictures are `display`, shown
         only until Plex names them. With `collections` on, a title an earlier catalog of the same
@@ -1116,95 +1308,118 @@ class Sync:
                     wanted.append((vid, "%s:%d:%d" % (imdb, video["season"], video["episode"]), dict(full, **meta), video, also, imdb))
                 elif isinstance(video.get("id"), str) and video["id"]:
                     wanted.append((vid, video["id"], dict(full, **meta), video, (), None))
-        items = []
-        for vid, sid, meta, video, also, imdb in wanted:
-            if self.stale(version):
-                # A save replaced this pass's catalogs: the relay no longer routes their paths, so
-                # every probe left would 404 (5,147 of them on one VPS, 2026-10-26).
-                complete = False
-                break
-            info_path = self.path("info", vid, config, version)
-            expected_info = dict({"kind": kind, "sid": sid}, **({"also": list(also)} if also else {}))
-            try:
-                info = self.cached("info", vid, lambda: expected_info, config, version)
-            except Exception as error:
-                complete = False
-                LOG.warning("%s: %s", vid, safe_error(error))
-                # A truncated JSON file is just as stale as a valid record for another item.
-                # Repair it before the probe so the next relay request sees a usable identity.
-                info = expected_info
-                self.cache_write(info_path, info, version)
-                self.cache_remove(self.path(PROBES, vid, config, version), version)
-            info_valid = isinstance(info, dict) and info.get("kind") == kind and info.get("sid") == sid
-            if info_valid and (info.get("also") or []) != list(also):
-                self.cache_update(info_path, {"also": list(also)}, version)
-            if not info_valid:
-                # Repair identity before probing. A stale identity means the derived probe belongs
-                # to a different source item and must not be reused for this one.
-                complete = False
-                info = expected_info
-                self.cache_write(info_path, info, version)
-                self.cache_remove(self.path(PROBES, vid, config, version), version)
-
-            # A corrupt or shape-invalid derived probe is repairable. Remove just that record
-            # and ask ffprobe once more; a real probe failure is still recorded as a partial
-            # catalog without repeatedly hammering the source.
-            probe_path = self.path(PROBES, vid, config, version)
-            extension = None
-            # A stream ffprobe cannot read or rex cannot take gives way to the next one: an
-            # addon's best-labelled link was a .zip of another show (Eclipsia, 2026-10-24), and
-            # pinned, it kept the title out of rex on every sync.
-            for _ in range(3):
-                probe = None
-                for attempt in range(2):
-                    had_cache = os.path.isfile(probe_path)
-                    try:
-                        probe = self.cached(PROBES, vid, lambda: self.probe(vid, catalog, config), config, version)
-                    except Exception as error:  # no stream that opens, or one ffprobe could not read
-                        complete = False
-                        if attempt == 0 and had_cache:
-                            self.cache_remove(probe_path, version)
-                            continue
-                        LOG.warning("%s: %s", vid, safe_error(error))
-                        break
-                    if isinstance(probe, dict) and isinstance(probe.get("format"), dict):
-                        break
-                    complete = False
-                    if attempt == 0:
-                        self.cache_remove(probe_path, version)
-                        continue
-                    LOG.warning("%s: ffprobe returned no format", vid)
-                    probe = None
-                if isinstance(probe, dict) and isinstance(probe.get("format"), dict):
-                    extension = CONTAINERS.get(probe["format"].get("format_name"))
-                    if extension and kind != "tv" and placeholder(probe):
-                        LOG.warning("%s: a %ss clip, not the title", vid, probe["format"].get("duration"))
-                        extension = None
-                    if extension and not any(isinstance(stream, dict) and stream.get("codec_type") == "video"
-                                             for stream in probe.get("streams") or []):
-                        # Pluto's MST3K probed as a subtitle track alone (2026-10-24).
-                        LOG.warning("%s: no picture in it", vid)
-                        extension = None
-                    if extension:
-                        break
-                    complete = False
-                    LOG.warning("%s: a %s stream rex cannot take", vid, probe["format"].get("format_name"))
-                if not self.refuse(vid, config, version):
-                    break
-            if not extension:
-                continue
-            if info.get("extension") != extension:
-                if not self.cache_update(info_path, {"extension": extension}, version):
-                    complete = False
+        items = [None] * len(wanted)
+        batch, pushed_at = [], time.time()
+        # Items are probed probe_workers at a time, and each one reaches rex (`ready`) within
+        # READY_SECONDS of being ready, not when its whole catalog is done.
+        with ThreadPoolExecutor(config["probe_workers"]) as pool:
+            futures = {pool.submit(self._ready_item, entry, catalog, kind, config, version): at for at, entry in enumerate(wanted)}
+            for future in as_completed(futures):
+                item, ok = future.result()
+                complete &= ok
+                if item is None:
                     continue
-            try:
-                items.append(stremio_item(config, catalog, vid, sid if kind == "tv" else imdb, meta, video, probe, extension))
-            except Exception as error:
-                complete = False
-                LOG.warning("%s: %s", vid, safe_error(error))
+                items[futures[future]] = item
+                batch.append(item)
+                if ready and (len(batch) >= READY_BATCH or time.time() - pushed_at >= READY_SECONDS):
+                    ready(batch)
+                    batch, pushed_at = [], time.time()
+        if ready and batch:
+            ready(batch)
+        items = [item for item in items if item is not None]
         LOG.info("%s: %d of %d ready", safe_url(catalog["url"]), len(items), len(wanted))
         self.catalog_incomplete = not complete
         return items
+
+    def _ready_item(self, entry, catalog, kind, config, version):
+        """One wanted item, probed (or DMM's stored probe), as the feed item rex is sent, and
+        whether it went as planned; (None, ok) when it does not go to rex."""
+        vid, sid, meta, video, also, imdb = entry
+        complete = True
+        if self.stale(version):
+            # A save replaced this pass's catalogs: the relay no longer routes their paths, so
+            # every probe left would 404 (5,147 of them on one VPS, 2026-10-26).
+            return None, False
+        info_path = self.path("info", vid, config, version)
+        expected_info = dict({"kind": kind, "sid": sid}, **({"also": list(also)} if also else {}))
+        try:
+            info = self.cached("info", vid, lambda: expected_info, config, version)
+        except Exception as error:
+            complete = False
+            LOG.warning("%s: %s", vid, safe_error(error))
+            # A truncated JSON file is just as stale as a valid record for another item.
+            # Repair it before the probe so the next relay request sees a usable identity.
+            info = expected_info
+            self.cache_write(info_path, info, version)
+            self.cache_remove(self.path(PROBES, vid, config, version), version)
+        info_valid = isinstance(info, dict) and info.get("kind") == kind and info.get("sid") == sid
+        if info_valid and (info.get("also") or []) != list(also):
+            self.cache_update(info_path, {"also": list(also)}, version)
+        if not info_valid:
+            # Repair identity before probing. A stale identity means the derived probe belongs
+            # to a different source item and must not be reused for this one.
+            complete = False
+            info = expected_info
+            self.cache_write(info_path, info, version)
+            self.cache_remove(self.path(PROBES, vid, config, version), version)
+
+        # A corrupt or shape-invalid derived probe is repairable. Remove just that record
+        # and ask ffprobe once more; a real probe failure is still recorded as a partial
+        # catalog without repeatedly hammering the source.
+        probe_path = self.path(PROBES, vid, config, version)
+        extension = None
+        # A stream ffprobe cannot read or rex cannot take gives way to the next one: an
+        # addon's best-labelled link was a .zip of another show (Eclipsia, 2026-10-24), and
+        # pinned, it kept the title out of rex on every sync.
+        for _ in range(3):
+            probe = None
+            for attempt in range(2):
+                had_cache = os.path.isfile(probe_path)
+                try:
+                    probe = self.cached(PROBES, vid, lambda: self.stored(vid, config, version) or self.probe(vid, catalog, config),
+                                        config, version)
+                except Exception as error:  # no stream that opens, or one ffprobe could not read
+                    complete = False
+                    if attempt == 0 and had_cache:
+                        self.cache_remove(probe_path, version)
+                        continue
+                    LOG.warning("%s: %s", vid, safe_error(error))
+                    break
+                if isinstance(probe, dict) and isinstance(probe.get("format"), dict):
+                    break
+                complete = False
+                if attempt == 0:
+                    self.cache_remove(probe_path, version)
+                    continue
+                LOG.warning("%s: ffprobe returned no format", vid)
+                probe = None
+            if isinstance(probe, dict) and isinstance(probe.get("format"), dict):
+                extension = CONTAINERS.get(probe["format"].get("format_name"))
+                if extension and kind != "tv" and placeholder(probe):
+                    LOG.warning("%s: a %ss clip, not the title", vid, probe["format"].get("duration"))
+                    extension = None
+                if extension and not any(isinstance(stream, dict) and stream.get("codec_type") == "video"
+                                         for stream in probe.get("streams") or []):
+                    # Pluto's MST3K probed as a subtitle track alone (2026-10-24).
+                    LOG.warning("%s: no picture in it", vid)
+                    extension = None
+                if extension:
+                    break
+                complete = False
+                LOG.warning("%s: a %s stream rex cannot take", vid, probe["format"].get("format_name"))
+            if not self.refuse(vid, config, version):
+                break
+        if not extension:
+            return None, complete
+        if info.get("extension") != extension:
+            if not self.cache_update(info_path, {"extension": extension}, version):
+                complete = False
+                return None, complete
+        try:
+            return stremio_item(config, catalog, vid, sid if kind == "tv" else imdb, meta, video, probe, extension), complete
+        except Exception as error:
+            LOG.warning("%s: %s", vid, safe_error(error))
+            return None, False
 
     def once(self):
         with self.config_guard:
@@ -1223,10 +1438,25 @@ class Sync:
         items = []
         incomplete = False
         self.taken, listed = set(), []
+        sent = set()
+
+        def upsert(batch):
+            """Each item shows in rex once it is ready, not hours later when the last catalog is;
+            the snapshot at the end still removes what is gone. False once settings changed."""
+            for at in range(0, len(batch), 200):
+                answer = self.publish(version, "POST", "/rex/feed/%s/items" % config["source"], {"items": batch[at:at + 200]}, config)
+                if answer is None:
+                    return False
+                sent.update(id(item) for item in batch[at:at + 200])
+                for rejected in answer.get("rejected") or []:
+                    if isinstance(rejected, dict):
+                        LOG.warning("rex rejected %s: %s", rejected.get("id"), safe_error(rejected.get("reason")))
+            return True
+
         for catalog in config["catalogs"]:
-            before = len(items)
             try:
-                items += self.catalog_items(catalog, config, version)
+                found = self.catalog_items(catalog, config, version, ready=upsert)
+                items += found
                 listed.append((catalog, self.catalog_listed))
                 incomplete |= self.catalog_incomplete
             except Exception as error:
@@ -1234,20 +1464,9 @@ class Sync:
                 self.status = "failed at %s: %s" % (safe_error(catalog.get("title") or catalog["slug"]), safe_error(error))
                 LOG.warning("%s: %s", safe_url(catalog["url"]), safe_error(error))
                 continue
-            if self.stale(version):
+            if self.stale(version) or not upsert([item for item in found if id(item) not in sent]):
                 self.status = "settings changed during sync; retrying"
                 return
-            # Each catalog shows in rex once it is checked, not hours later when the last one is;
-            # the snapshot at the end still removes what is gone.
-            for at in range(0, len(items) - before, 200):
-                answer = self.publish(version, "POST", "/rex/feed/%s/items" % config["source"],
-                                      {"items": items[before + at:before + at + 200]}, config)
-                if answer is None:
-                    self.status = "settings changed during sync; retrying"
-                    return
-                for rejected in answer.get("rejected") or []:
-                    if isinstance(rejected, dict):
-                        LOG.warning("rex rejected %s: %s", rejected.get("id"), safe_error(rejected.get("reason")))
         if config.get("collections"):
             # Every file of a title names all its collections: rex keeps the last list it was sent.
             for item in items:
@@ -1417,6 +1636,10 @@ button.plain{background:transparent;color:var(--accent)}form.inline{display:inli
 <label for="size">Largest file (GB)</label><input id="size" type="number" min="0" step="0.1" name="max_size_gb" value="%(max_size_gb)s" placeholder="any"></div>
 <h2>rex</h2>
 <div class="row"><label for="rex">rex's address</label><input id="rex" type="url" name="rex_url" value="%(rex_url)s" required style="flex:1;min-width:220px"></div>
+<h2>DMM</h2>
+<p class="muted">With a DMM sponsor's API key, a title DMM has seen before skips its ffprobe: it shows in rex in seconds. Others are probed as before.</p>
+<div class="row"><label for="dmm">DMM API key</label><input id="dmm" type="password" name="dmm_api_key" autocomplete="off" placeholder="%(dmm_placeholder)s" style="flex:1;min-width:220px">
+<input type="checkbox" id="dmm-forget" name="dmm_forget" value="1"><label for="dmm-forget">Forget the key</label></div>
 <p style="margin-top:20px"><button>Save and sync</button></p>
 </form></body></html>"""
 
@@ -1469,7 +1692,9 @@ def page(config, status):
                    "resolutions": resolutions, "collections": " checked" if config.get("collections") else "", "max_size_gb": esc("%g" % config["max_size_gb"] if config.get("max_size_gb") else ""),
                    # The settings field is an authorized private input and must round-trip exactly;
                    # safe_url is reserved for logs/status and addon display.
-                   "rex_url": esc(config["rex_url"])}
+                   "rex_url": esc(config["rex_url"]),
+                   # The key itself is never put back into the page, only whether one is saved.
+                   "dmm_placeholder": "saved; type a new one to replace it" if config.get("dmm_api_key") else "none"}
 
 
 class App:
@@ -1511,6 +1736,9 @@ class App:
             if not rex_url.startswith(("http://", "https://")):
                 raise ValueError("rex_url must be an http(s) URL")
             values["rex_url"] = rex_url
+            key = form.get("dmm_api_key", [""])[0].strip()
+            # An empty field keeps the saved key: the page never shows it, so it cannot round-trip.
+            values["dmm_api_key"] = None if form.get("dmm_forget", [""])[0] == "1" else key or self.config.get("dmm_api_key")
             self.save(values)
 
     def add_addon(self, url):

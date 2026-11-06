@@ -50,7 +50,7 @@ The settings page with example addons, selected catalogs and playback limits.
 | You need | Why |
 |---|---|
 | rex, nightly 2026.10.25 or newer, claimed | A claimed rex lets Plex name each title. Setup: [rex](https://notes.debridmediamanager.com/rex/stremio/) |
-| Python 3.9 or newer and `ffprobe` (part of FFmpeg) | rex-stremio checks each title's stream once with ffprobe, because rex needs to know what is in it before it can play |
+| Python 3.9 or newer and `ffprobe` (part of FFmpeg) | rex-stremio checks each title's stream once with ffprobe, because rex needs to know what is in it before it can play. With a DMM sponsor's API key, a torrent's file that DMM has seen before skips ffprobe |
 | FFmpeg where rex runs, for addons that give HLS streams (`.m3u8`) | rex plays those by converting them (a copy, cheap). Files (`.mkv`, `.mp4`) need nothing |
 | Stream addons that give links, not torrents | rex plays files. Set your debrid service in the addon (for Torrentio, cached results only), or use one that gives links, such as DMM Cast |
 | rex-stremio on the same machine as rex, or on your home network | rex's feed answers only private networks |
@@ -74,8 +74,10 @@ Then open `http://127.0.0.1:9982/` on the same machine:
    in that library once, in each of their collections.
 3. Set **rex's address**, for example `http://192.168.1.20:32400`, and press **Save and sync**.
 
-The libraries show up in your Plex apps within a few minutes. rex-stremio syncs again every six
-hours and after every save.
+Titles show up in your Plex apps as each one is checked, from the first minute, and the rest
+follow while you browse. rex-stremio syncs again every six hours and after every save. To skip
+the check for titles DMM already knows, paste your DMM API key under **DMM**: [gatekeeper](https://gatekeeper.debridmediamanager.com/)
+shows it once you sponsor DMM.
 
 To run it as a service, copy `rex-stremio.service` to `~/.config/systemd/user/` and run
 `systemctl --user daemon-reload && systemctl --user enable --now rex-stremio`. With Docker:
@@ -105,6 +107,8 @@ The page writes `config.json` (mode 600). You can also edit it yourself and rest
 | `ffprobe` | `ffprobe` | The ffprobe to use |
 | `interval_minutes` | `360` | How often to sync |
 | `stream_interval_seconds` | `1` | The least time between two stream requests to one addon's host. Raise it for an addon that often answers 429 (Too Many Requests) |
+| `probe_workers` | `4` | How many titles are checked at once (1 to 16). Requests to one addon's host still keep `stream_interval_seconds` apart |
+| `dmm_api_key` | none | A DMM sponsor's API key. A torrent stream whose file DMM holds a probe of (same torrent, same size, and same name when the addon names the file) takes that probe instead of running ffprobe. Anything else is probed |
 | `retry_minutes` | `10` | How soon the next sync runs when an addon turned titles away, instead of `interval_minutes` (three times at most, then the usual interval) |
 | `max_resolution` | any | `2160`, `1080` or `720`: no stream above it plays |
 | `max_size_gb` | any | No stream larger than this plays |

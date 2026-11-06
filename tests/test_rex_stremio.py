@@ -745,6 +745,17 @@ class Settings(unittest.TestCase):
         self.assertEqual(answer.exception.code, 400)
         self.assertEqual(read_json(self.path).get("addons", []), [])
 
+    def test_dmm_key_is_saved_never_shown_kept_when_left_empty_and_forgotten(self):
+        form = {"rex_url": "http://127.0.0.1:32400", "dmm_api_key": " secret-sponsor-key "}
+        page = self.post("/settings", form)
+        self.assertEqual(read_json(self.path)["dmm_api_key"], "secret-sponsor-key")
+        self.assertNotIn("secret-sponsor-key", page)
+        self.assertIn("saved; type a new one to replace it", page)
+        self.post("/settings", dict(form, dmm_api_key=""))
+        self.assertEqual(read_json(self.path)["dmm_api_key"], "secret-sponsor-key")
+        self.post("/settings", dict(form, dmm_api_key="", dmm_forget="1"))
+        self.assertIsNone(read_json(self.path)["dmm_api_key"])
+
     def test_invalid_settings_do_not_change_disk_or_running_config(self):
         before = read_json(self.path)
         running = dict(self.config)
@@ -879,7 +890,7 @@ class PartialSync(unittest.TestCase):
         calls = []
         sync.register = lambda config=None: None
 
-        def catalog_items(catalog, config=None, version=None):
+        def catalog_items(catalog, config=None, version=None, ready=None):
             app.save(dict(sync.config), sync=False)
             return [healthy]
 
@@ -911,7 +922,7 @@ class PartialSync(unittest.TestCase):
         calls = []
         sync.register = lambda config=None: None
 
-        def catalog_items(catalog, config=None, version=None):
+        def catalog_items(catalog, config=None, version=None, ready=None):
             if catalog["url"].endswith("two.json"):
                 self.assertIn(("POST", "/rex/feed/stremio/items", {"items": [first]}), calls)
                 return [second]
@@ -929,7 +940,8 @@ class Concurrency(unittest.TestCase):
     def test_save_stops_the_obsolete_pass_from_probing(self):
         # After a save, the old pass's relay paths 404: on one VPS (2026-10-26) it went on to fail
         # 5,147 probes over its remaining catalogs before the new settings were synced at all.
-        path = config_file(self, {"cache": tempfile.mkdtemp(prefix="rex-stremio-cache-"), "catalogs": [
+        # One worker: with N, up to N probes are already in flight when the save lands.
+        path = config_file(self, {"cache": tempfile.mkdtemp(prefix="rex-stremio-cache-"), "probe_workers": 1, "catalogs": [
             {"url": "https://a/catalog/movie/one.json"},
             {"url": "https://a/catalog/movie/two.json"}]})
         config = rex_stremio.load_config(path)
@@ -1346,6 +1358,188 @@ class RateLimitedAddon(unittest.TestCase):
         with unittest.mock.patch.object(rex_stremio, "get_json", return_value=self.CAPTURED["unknown"]):
             self.assertEqual(sync.streams("movie", "tt9999999999", config), [])
         self.assertFalse(sync.retry_soon)
+
+
+MATRIX = read_json(os.path.join(FIXTURES, "torrentio-rd-matrix-2026-11-06.json"))["streams"]
+MATRIX_DMM = read_json(os.path.join(FIXTURES, "dmm-mediainfo-matrix-2026-11-06.json"))["releases"]
+TIGOLE, IAMABLE = "12f8ca9709b357477612aaac7c6703503c410352", "03dd34fea0ff15a451c1723062a901aa3a0ad458"
+SIZES = {TIGOLE: 15237850498, IAMABLE: 37675795874}  # the files the two releases' links serve
+
+
+def dmm_host(test, known, key="sponsor-key"):
+    """DMM's /api/sponsor/mediainfo over `known` releases: 401 for another key, each answer a
+    subset of the hashes asked. Returns its URL and the hash lists it was asked, in order."""
+    asked = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.headers.get("x-api-key") != key:
+                raw, status = b'{"error":"Invalid API key"}', 401
+            else:
+                asked.append((time.monotonic(), body["hashes"]))
+                raw, status = json.dumps({"releases": {h: known[h] for h in body["hashes"] if h in known}}).encode(), 200
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    test.addCleanup(stop_server, server)
+    return "http://127.0.0.1:%d/api/sponsor/mediainfo" % server.server_address[1], asked
+
+
+def size_host(test):
+    """Debrid links as they answer a one-byte Range: the size of the release file each serves."""
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            size = next((size for hash_, size in SIZES.items() if hash_ in self.path), 1 << 30)
+            self.send_response(206)
+            self.send_header("Content-Type", "video/x-matroska")
+            self.send_header("Content-Range", "bytes 0-0/%d" % size)
+            self.send_header("Content-Length", "1")
+            self.end_headers()
+            self.wfile.write(b"\x1a")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    test.addCleanup(stop_server, server)
+    return "http://127.0.0.1:%d" % server.server_address[1]
+
+
+class StoredProbes(unittest.TestCase):
+    """DMM's stored probes stand in for ffprobe (2026-11-06: DMM held 9 of the 10 Matrix releases
+    Torrentio ranks first). Captured: Torrentio's answer over RD and DMM's answer for two of them."""
+
+    def test_info_hash_from_the_stream_or_its_link(self):
+        self.assertEqual([rex_stremio.info_hash(stream) for stream in MATRIX], [IAMABLE, TIGOLE])
+        # A p2p stream names it itself (Torrentio without a debrid service).
+        self.assertEqual(rex_stremio.info_hash({"infoHash": "61065EA115B7CC3E8DB9FB5AB1F6F327F08BD1C9", "fileIdx": 0}),
+                         "61065ea115b7cc3e8db9fb5ab1f6f327f08bd1c9")
+        self.assertIsNone(rex_stremio.info_hash(DMM[0]))  # a DMM Cast link carries none
+        self.assertIsNone(rex_stremio.info_hash({"url": "https://a/%s0/x.mkv" % TIGOLE}))  # 41 hex digits are no hash
+
+    def test_the_file_of_that_size_and_name(self):
+        main = rex_stremio.stored_probe(MATRIX_DMM[TIGOLE], SIZES[TIGOLE])
+        self.assertEqual(len(main["streams"]), 27)
+        self.assertEqual(main["format"]["format_name"], "matroska,webm")
+        self.assertIsNone(rex_stremio.stored_probe(MATRIX_DMM[TIGOLE], SIZES[TIGOLE] + 1))
+        named = rex_stremio.stored_probe(MATRIX_DMM[IAMABLE], SIZES[IAMABLE], "The.Matrix.1999.RERIP.2160p.UHD.BluRay.X265-IAMABLE.mkv")
+        self.assertEqual(named["format"]["size"], str(SIZES[IAMABLE]))
+        self.assertIsNone(rex_stremio.stored_probe(MATRIX_DMM[IAMABLE], SIZES[IAMABLE], "another.mkv"))
+        # DMM lists this release's sample twice, under two paths and the same size: no answer.
+        self.assertIsNone(rex_stremio.stored_probe(MATRIX_DMM[IAMABLE], 281993068))
+
+    def test_hashes_asked_together_in_batches_and_spaced(self):
+        url, asked = dmm_host(self, MATRIX_DMM)
+        dmm = rex_stremio.StoredProbes("sponsor-key", url)
+        hashes = [TIGOLE, IAMABLE] + ["%040x" % n for n in range(1, 24)]
+        with unittest.mock.patch.object(rex_stremio, "DMM_BATCH", 10), unittest.mock.patch.object(rex_stremio, "DMM_SPACING", 0.3):
+            answers = {}
+            workers = [threading.Thread(target=lambda h=h: answers.__setitem__(h, dmm.release(h))) for h in hashes]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(30)
+        self.assertEqual(sorted(h for batch in asked for h in batch[1]), sorted(hashes))
+        self.assertEqual([len(batch) for _, batch in asked], [10, 10, 5])
+        self.assertGreaterEqual(min(b[0] - a[0] for a, b in zip(asked, asked[1:])), 0.29)
+        self.assertEqual(sorted(h for h, release in answers.items() if release), sorted([TIGOLE, IAMABLE]))
+        self.assertIsNone(dmm.release("%040x" % 1))  # known not to be there: not asked again
+        self.assertEqual(len(asked), 3)
+
+    def test_a_refused_key_is_not_used_again(self):
+        url, asked = dmm_host(self, MATRIX_DMM)
+        dmm = rex_stremio.StoredProbes("lapsed", url)
+        self.assertIsNone(dmm.release(TIGOLE))
+        self.assertTrue(dmm.refused)
+        self.assertIsNone(dmm.release(IAMABLE))
+        self.assertEqual(asked, [])
+
+    def sync_matrix(self, streams, key="sponsor-key", known=MATRIX_DMM):
+        url, asked = dmm_host(self, known)
+        links = size_host(self)
+        streams = [dict(stream, url=stream["url"].replace("https://torrentio.strem.fun", links)) for stream in streams]
+        config = rex_stremio.load_config(config_file(self, {
+            "cache": tempfile.mkdtemp(prefix="rex-stremio-"), "dmm_api_key": key,
+            "catalogs": [{"url": "https://a/catalog/movie/top.json", "title": "Films"}]}))
+        sync = rex_stremio.Sync(config)
+        probed = []
+        fallback = read_json(os.path.join(FIXTURES, "probe-top-films-tt6262770.json"))
+        metas = {"metas": [{"id": "tt0133093", "type": "movie", "name": "The Matrix"}]}
+        with unittest.mock.patch.object(rex_stremio, "DMM_MEDIAINFO", url), \
+                unittest.mock.patch.object(rex_stremio, "get_json", lambda *args, **kwargs: metas), \
+                unittest.mock.patch.object(rex_stremio, "opens", lambda link, headers=None: link), \
+                unittest.mock.patch.object(rex_stremio.Sync, "streams", lambda *args, **kwargs: streams), \
+                unittest.mock.patch.object(rex_stremio.Sync, "probe", lambda self, vid, *rest: probed.append(vid) or fallback):
+            items = sync.catalog_items(config["catalogs"][0])
+        return items, probed, asked
+
+    def test_a_title_dmm_knows_goes_to_rex_without_ffprobe(self):
+        items, probed, asked = self.sync_matrix([MATRIX[1]])
+        self.assertEqual(probed, [])
+        self.assertEqual([batch for _, batch in asked], [[TIGOLE]])
+        self.assertEqual(items[0]["media_info"], rex_stremio.stored_probe(MATRIX_DMM[TIGOLE], SIZES[TIGOLE]))
+        self.assertEqual((items[0]["path"], items[0]["size"]), ("stremio-films/films/films-tt0133093.mkv", SIZES[TIGOLE]))
+
+    def test_a_named_file_is_matched_by_its_name_too(self):
+        items, probed, _ = self.sync_matrix([MATRIX[0]])
+        self.assertEqual(probed, [])
+        self.assertEqual(items[0]["size"], SIZES[IAMABLE])
+
+    def test_what_dmm_does_not_know_is_probed(self):
+        items, probed, asked = self.sync_matrix([MATRIX[1]], known={})
+        self.assertEqual((probed, [batch for _, batch in asked]), (["films-tt0133093"], [[TIGOLE]]))
+        self.assertEqual(items[0]["media_info"]["format"]["format_name"], "hls")
+
+    def test_without_a_key_nothing_is_asked(self):
+        items, probed, asked = self.sync_matrix([MATRIX[1]], key=None)
+        self.assertEqual((probed, asked), (["films-tt0133093"], []))
+
+
+class ParallelProbes(unittest.TestCase):
+    def test_items_are_probed_together_and_reach_rex_as_they_are_ready(self):
+        config = rex_stremio.load_config(config_file(self, {
+            "cache": tempfile.mkdtemp(prefix="rex-stremio-"), "probe_workers": 3,
+            "catalogs": [{"url": "https://a/catalog/movie/top.json", "title": "Films"}]}))
+        sync = rex_stremio.Sync(config)
+        sync.register = lambda config=None: None
+        probe = read_json(os.path.join(FIXTURES, "probe-top-films-tt6262770.json"))
+        running, most, lock, calls = [0], [0], threading.Lock(), []
+
+        def slow_probe(self, vid, *rest):
+            with lock:
+                running[0] += 1
+                most[0] = max(most[0], running[0])
+            time.sleep(0.4)
+            with lock:
+                running[0] -= 1
+            return probe
+
+        sync.rex = lambda method, path, body=None, config=None: calls.append((time.monotonic(), method, path, body)) or {}
+        metas = {"metas": [{"id": "tt%07d" % n, "type": "movie", "name": "Film %d" % n} for n in range(1, 7)]}
+        started = time.monotonic()
+        with unittest.mock.patch.object(rex_stremio, "READY_SECONDS", 0), \
+                unittest.mock.patch.object(rex_stremio, "get_json", lambda *args, **kwargs: metas), \
+                unittest.mock.patch.object(rex_stremio.Sync, "probe", slow_probe):
+            sync.once()
+        self.assertEqual(most[0], 3)
+        self.assertLess(time.monotonic() - started, 6 * 0.4)
+        posts = [call for call in calls if call[1] == "POST"]
+        # The first items were in rex while the last were still being probed...
+        self.assertLess(posts[0][0] - started, 0.8)
+        # ...and each went up once, the snapshot then naming all six.
+        sent = [item["id"] for call in posts for item in call[3]["items"]]
+        self.assertEqual(sorted(sent), sorted(set(sent)))
+        self.assertEqual(len(sent), 6)
+        self.assertEqual(calls[-1][1:3], ("PUT", "/rex/feed/stremio/snapshot"))
+        self.assertEqual(len(calls[-1][3]["items"]), 6)
 
 
 @unittest.skipUnless(os.path.exists(os.environ.get("REX_BIN", "/nonexistent")), "REX_BIN names no rex binary")
