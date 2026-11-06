@@ -34,9 +34,9 @@ collection there.
 
 </details>
 
-The settings page with example addons, selected catalogs and playback limits.
+The settings page with example addons, selected catalogs, playback limits and the DMM key field.
 
-![Light appearance: Cinemeta and Public Domain Movies addons, catalog libraries and playback settings](docs/screenshots/settings-light.png)
+![Light appearance: Cinemeta and Public Domain Movies addons, catalog libraries, playback settings, rex's address and the DMM API key](docs/screenshots/settings-light.png)
 
 <details>
 <summary>Dark appearance</summary>
@@ -74,10 +74,10 @@ Then open `http://127.0.0.1:9982/` on the same machine:
    in that library once, in each of their collections.
 3. Set **rex's address**, for example `http://192.168.1.20:32400`, and press **Save and sync**.
 
-Titles show up in your Plex apps as each one is checked, from the first minute, and the rest
-follow while you browse. rex-stremio syncs again every six hours and after every save. To skip
-the check for titles DMM already knows, paste your DMM API key under **DMM**: [gatekeeper](https://gatekeeper.debridmediamanager.com/)
-shows it once you sponsor DMM.
+Titles show up in your Plex apps as each one is checked, not when the whole catalog is done,
+and rex-stremio checks several at once. It syncs again every six hours and after every save. To
+skip the check for titles DMM already knows, paste your DMM API key under **DMM**:
+[gatekeeper](https://gatekeeper.debridmediamanager.com/) shows it once you sponsor DMM.
 
 To run it as a service, copy `rex-stremio.service` to `~/.config/systemd/user/` and run
 `systemctl --user daemon-reload && systemctl --user enable --now rex-stremio`. With Docker:
@@ -145,7 +145,7 @@ The page writes `config.json` (mode 600). You can also edit it yourself and rest
 - A sync asks the stream addons about every title not yet checked, where Stremio asks only when a
   title is opened, so an addon behind a rate limit (111477 allows about 3 requests in 10 seconds)
   can turn titles away. rex-stremio asks each addon's host at most once per
-  `stream_interval_seconds`, waits as long as a 429 answer says (at most a minute) and asks again,
+  `stream_interval_seconds`, however many titles it is checking at once, waits as long as a 429 answer says (at most a minute) and asks again,
   and treats an answer of `"streams": null` the same way. A host that refuses three times in a row
   is not asked again until `retry_minutes` have passed, and the next sync runs then, so titles it
   turned away come in over a few passes rather than six hours later.
