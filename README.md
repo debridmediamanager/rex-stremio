@@ -1,8 +1,8 @@
 # rex-stremio
 
-Your Stremio addons' catalogs as libraries in [rex](https://rex.debridmediamanager.com), so the
-films, shows and live channels they list play in every Plex app. Nothing is downloaded: when someone presses
-play, rex-stremio asks your stream addons for a link, as Stremio does, and rex plays it.
+Your Stremio addon catalogs as libraries in [rex](https://rex.debridmediamanager.com). Films shows and
+live channels then play in every Plex app. Nothing is downloaded. rex-stremio asks the addons for a link
+when you press play and rex plays it.
 
 - **Add addons as in Stremio.** Paste a manifest link on the settings page. Catalogs come from
   any addon (Cinemeta, your DMM Cast list), streams from every addon that has them.
